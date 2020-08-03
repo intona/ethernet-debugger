@@ -1,0 +1,7 @@
+**/build/*
+**/tmp/*
+.*
+*.exe
+/nose
+!.gitignore
+!.gitmodules

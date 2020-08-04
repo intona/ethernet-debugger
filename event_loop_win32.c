@@ -100,10 +100,26 @@ static void handle_io_result(struct os_event_loop *el,
                              BOOL ret, DWORD error, DWORD res)
 {
     assert(!oi->pending);
-    if (error == ERROR_IO_PENDING) {
-        oi->pending = true;
+    if (!ret && error == ERROR_IO_PENDING) {
+        // Should never happen; or caller error (not using handle_io_ov_result()).
+        assert(false);
     } else {
         handle_io_cp_result(el, oi, ret, error, res);
+    }
+}
+
+// Using overlapped I/O with IOCP behave slightly differently: a success result
+// (not pending) will end up in a IOCP notification anyway.
+// Errors might (?) still yield a direct result, this is unknown.
+static void handle_io_ov_result(struct os_event_loop *el,
+                                struct overlapped_info *oi,
+                                BOOL ret, DWORD error)
+{
+    assert(!oi->pending);
+    if (ret || error == ERROR_IO_PENDING) {
+        oi->pending = true;
+    } else {
+        handle_io_cp_result(el, oi, ret, error, 0);
     }
 }
 
@@ -119,15 +135,16 @@ void os_event_loop_wait(struct os_event_loop *el, int64_t timeout)
                 if (p->flags & PIPE_FLAG_SERVE) {
                     if (!p->oi_s.pending && !p->can_read) {
                         BOOL ret = ConnectNamedPipe(p->handle, &p->oi_s.ol);
-                        handle_io_result(el, &p->oi_s, ret, GetLastError(), 0);
+                        handle_io_ov_result(el, &p->oi_s, ret, GetLastError());
                     }
                 }
 
                 if (p->flags & PIPE_FLAG_READ) {
                     if (!p->oi_r.pending && !p->r_buf_size) {
                         // Start new read operation.
-                        ReadFile(p->handle, p->r_buf, TMP_BUF_SIZE,
-                                 NULL, &p->oi_r.ol);
+                        BOOL ret = ReadFile(p->handle, p->r_buf, TMP_BUF_SIZE,
+                                            NULL, &p->oi_r.ol);
+                        handle_io_ov_result(el, &p->oi_r, ret, GetLastError());
                     }
                 }
 
@@ -135,8 +152,9 @@ void os_event_loop_wait(struct os_event_loop *el, int64_t timeout)
                     p->w_buf_size)
                 {
                     // Start new write operation.
-                    WriteFile(p->handle, p->w_buf, p->w_buf_size,
-                              NULL, &p->oi_w.ol);
+                    BOOL ret = WriteFile(p->handle, p->w_buf, p->w_buf_size,
+                                         NULL, &p->oi_w.ol);
+                    handle_io_ov_result(el, &p->oi_w, ret, GetLastError());
                 }
             } else if (p->io_mode == IO_DIRECT) {
                 if ((p->flags & PIPE_FLAG_READ) && !p->r_buf_size) {
@@ -213,6 +231,7 @@ void os_event_loop_wait(struct os_event_loop *el, int64_t timeout)
             DWORD err = GetLastError();
             struct overlapped_info *oi = (struct overlapped_info *)ol;
             assert(oi->magic == OVERLAPPED_MAGIC);
+            assert(oi->pending);
             oi->pending = false;
             handle_io_cp_result(el, oi, ret, err, res);
         }

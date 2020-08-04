@@ -422,7 +422,7 @@ error:
                 get_type_help(opt->type));
     }
     logline(log, "Usually: --optname optvalue\n");
-    logline(log, "Bool options use 'true' as implicit argument if not provided.\n");
+    logline(log, "Bool options implicitly use 'true' if no value is provided.\n");
     logline(log, "Alternative syntax: --optname=optvalue\n");
     return false;
 }

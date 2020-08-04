@@ -449,6 +449,7 @@ static void on_grabber_status_timer(void *ud, struct timer *t)
             "         Total SW packets: %"PRId64"\n"
             "         Total SW dropped: %"PRId64"\n"
             "         Total HW dropped: %"PRId64"\n"
+            "         Total broken packets: %"PRId64"\n"
             "         HW FIFO overflows: %"PRIu64"\n"
             "         TS problems: %"PRIu64"\n"
             "         HW packet counter: 0x%"PRIx32"\n",
@@ -462,6 +463,7 @@ static void on_grabber_status_timer(void *ud, struct timer *t)
             pst.sw_frames,
             pst.sw_dropped,
             pst.hw_dropped,
+            pst.broken_packets,
             pst.overflows,
             pst.ts_problems,
             pst.hw_packet_counter);

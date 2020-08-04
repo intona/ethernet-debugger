@@ -64,6 +64,7 @@ struct packet_fifo {
     // --- access by consumer only
     uint64_t dropped_total;     // sums any dropped frames since last frame
     uint64_t dropped_total_prev;// dropped_total before newest frame
+    uint64_t broken_packets;    // indirection for synchronization
     uint8_t packet_buffer[MAX_ETH_FRAME_SIZE]; // temp. buffer for packet
     struct grabber_packet packet; // temp. packet memory
     struct grabber_interface gr_iface;
@@ -227,6 +228,8 @@ static struct grabber_packet *packet_fifo_read_next(struct grabber *gr,
                 fifo->frames_written - fifo->stats.sw_frames;
             fifo->stats.sw_buffer_sz =
                 have_packets ? byte_fifo_get_available(&fifo->data) : 0;
+            fifo->stats.broken_packets += fifo->broken_packets;
+            fifo->broken_packets = 0;
         }
 
         if (read_fifo)
@@ -448,6 +451,8 @@ static void *writer_thread(void *ptr)
         // (depends on ethernet speed; use lowest tolerated gap for gigabit)
         if (pkt->interpacket_frame_gap < 8)
             flags |= 1u << 27; // "wrong Inter Frame Gap error"
+        if (flags)
+            gr->fifos[pkt->iface->port].broken_packets++;
         wbuf_write32(&buf, flags);
         // option: dropped packet count
         wbuf_write16(&buf, 4); // epb_dropcount

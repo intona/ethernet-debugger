@@ -111,7 +111,8 @@ struct grabber_port_stats {
     size_t sw_buffer_sz_max;// total size of the sw_buffer
     uint64_t sw_dropped;    // number of packets dropped due to full SW buffer
     uint64_t hw_dropped;    // number of packets dropped in HW or host USB stack
-    uint64_t ts_problems;   // number of broken timestamps
+    uint64_t broken_packets;// number of packets with error flags set
+    uint64_t ts_problems;   // number of broken timestamps (internal problem)
     uint64_t overflows;     // number of known FIFO overflow events
     uint32_t hw_packet_counter; // last received packet counter field
 };

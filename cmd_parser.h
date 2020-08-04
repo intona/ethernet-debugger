@@ -11,6 +11,7 @@
 struct command_ctx {
     struct logfn log;               // the one that was passed to the parser
     int64_t seq_id;                 // command reply ID, or -1
+    struct json_out *jout;          // if non-NULL, write json command output
     bool success;                   // whether command was successful (already
                                     // set to true when command handler starts)
     void *priv;                     // opaque; set by caller of command_dispatch()
@@ -65,6 +66,10 @@ struct command_def {
 // Parses cmd using the command list given by cmds[] (terminated with an all-0
 // command_def item). If parsing succeeds, the matching command_def's .cb is
 // called, and true is returned.
+// ctx must be initialized by the caller. The seq_id and success fields are
+// overwritten by the function. jout is also set to NULL if cmd did not use
+// json form, otherwise it will write stuff if jout is set to non-NULL by the
+// caller. Command callbacks can append new object fields to jout.
 void command_dispatch(const struct command_def *cmds, struct command_ctx *ctx,
                       const char *cmd);
 

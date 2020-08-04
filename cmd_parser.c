@@ -6,6 +6,7 @@
 #include "cmd_parser.h"
 #include "json.h"
 #include "json_helpers.h"
+#include "json_out.h"
 #include "utils.h"
 
 static void json_log(void *opaque, size_t loc, const char *msg)
@@ -189,6 +190,8 @@ void command_dispatch(const struct command_def *cmds, struct command_ctx *ctx,
             num_args++;
         if (num_args > 0)
             cmdname = args[0];
+
+        ctx->jout = NULL;
     }
 
     if (!cmdname) {
@@ -244,8 +247,18 @@ void command_dispatch(const struct command_def *cmds, struct command_ctx *ctx,
         goto done;
     }
 
+    if (ctx->jout) {
+        json_out_object_start(ctx->jout);
+        json_out_field_int(ctx->jout, "id", ctx->seq_id);
+    }
+
     ctx->success = true;
     cmd_def->cb(ctx, params, num_params);
+
+    if (ctx->jout) {
+        json_out_field_bool(ctx->jout, "success", ctx->success);
+        json_out_object_end(ctx->jout);
+    }
 
 done:
     for (size_t n = 0; args && args[n]; n++)

@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -21,6 +22,7 @@
 #include "filters.h"
 #include "global.h"
 #include "grabber.h"
+#include "json_out.h"
 #include "nose.h"
 #include "usb_control.h"
 #include "usb_io.h"
@@ -232,8 +234,18 @@ static void flush_log(struct nose_ctx *ctx)
                 continue;
             // A proper protocol will need the log line be escaped or such, for
             // now achieve that by adding a seemingly redundant prefix.
-            pipe_write(cl->conn, "LOG: ", 5);
-            pipe_write(cl->conn, buf, strlen(buf));
+            struct json_out jout;
+            char jout_buf[MAX_LOG_RECORD * 4];
+            json_out_init(&jout, jout_buf, sizeof(jout_buf));
+            json_out_object_start(&jout);
+            json_out_field_string(&jout, "type", "log");
+            json_out_field_string(&jout, "msg", buf);
+            json_out_object_end(&jout);
+            char *j = json_out_get_output(&jout);
+            if (!j)
+                j = "(error)";
+            pipe_write(cl->conn, j, strlen(j));
+            pipe_write(cl->conn, "\n", 1);
         }
 
         log_extcap(ctx, buf);
@@ -249,13 +261,35 @@ static void on_log_data(void *ud, struct event *ev)
     flush_log(ctx);
 }
 
-static void process_command(struct nose_ctx *ctx, char *cmd)
+// Run the given command.
+//  cmd: command string
+//  p: if not NULL, all command output is supposed to go here and as json
+static void process_command(struct nose_ctx *ctx, char *cmd, struct pipe *p)
 {
+    struct json_out jout;
+    char jout_buf[4096];
+    json_out_init(&jout, jout_buf, sizeof(jout_buf));
+
     struct command_ctx cctx = {
+        // Log output could be reformatted ad-hoc for IPC output. But for now,
+        // output them as global messages to everywhere. Command for which it
+        // matters can explicitly switch between output styles.
         .log = ctx->log,
+        .jout = &jout,
         .priv = ctx,
     };
+
     command_dispatch(command_list, &cctx, cmd);
+
+    char *s = cctx.jout ? json_out_get_output(cctx.jout) : NULL;
+    if (s) {
+        if (p) {
+            pipe_write(p, s, strlen(s));
+            pipe_write(p, "\n", 1);
+        } else {
+            LOG(&cctx, "%s\n", s);
+        }
+    }
 }
 
 static void cmd_help(struct command_ctx *cctx, struct command_param *params,
@@ -395,7 +429,12 @@ static void cmd_dev_list(struct command_ctx *cctx, struct command_param *params,
     libusb_device **list = NULL;
     libusb_get_device_list(usb_thread_libusb_context(ctx->global->usb_thr), &list);
 
-    LOG(cctx, "Devices:\n");
+    if (cctx->jout) {
+        json_out_field_start(cctx->jout, "list");
+        json_out_array_start(cctx->jout);
+    } else {
+        LOG(cctx, "Devices:\n");
+    }
 
     size_t num_devs = 0;
 
@@ -405,13 +444,23 @@ static void cmd_dev_list(struct command_ctx *cctx, struct command_param *params,
         if (!usb_get_device_name(list[n], devname, sizeof(devname)))
             continue;
 
-        LOG(cctx, " - '%s'\n", devname);
+        if (cctx->jout) {
+            json_out_array_entry_start(cctx->jout);
+            json_out_string(cctx->jout, devname);
+        } else {
+            LOG(cctx, " - '%s'\n", devname);
+        }
+
         num_devs++;
     }
 
     libusb_free_device_list(list, 1);
 
-    LOG(cctx, "Found %zu devices.\n", num_devs);
+    if (cctx->jout) {
+        json_out_array_end(cctx->jout);
+    } else {
+        LOG(cctx, "Found %zu devices.\n", num_devs);
+    }
 }
 
 static void on_grabber_status_timer(void *ud, struct timer *t)
@@ -551,11 +600,16 @@ static void cmd_mdio_read(struct command_ctx *cctx, struct command_param *params
         reg = MDIO_PAGE_REG(p, reg);
 
     int r = device_mdio_read(dev, params[0].p_int, reg);
-    if (r >= 0) {
-        LOG(cctx, "result: value=0x%04x\n", r);
+    cctx->success = r >= 0;
+
+    if (cctx->jout) {
+        json_out_field_int(cctx->jout, "result", r);
     } else {
-        LOG(cctx, "error %d\n", r);
-        cctx->success = false;
+        if (cctx->success) {
+            LOG(cctx, "result: value=0x%04x\n", r);
+        } else {
+            LOG(cctx, "error %d\n", r);
+        }
     }
 }
 
@@ -780,6 +834,15 @@ static void cmd_exit(struct command_ctx *cctx, struct command_param *params,
     event_loop_request_terminate(ctx->ev);
 }
 
+static void write_to_pipe(void *ctx, const char *fmt, va_list va)
+{
+    struct pipe *p = ctx;
+    char buf[4096];
+    if (vsnprintf(buf, sizeof(buf), fmt, va) >= sizeof(buf))
+        snprintf(buf, sizeof(buf), "(error)\n");
+    pipe_write(p, buf, strlen(buf));
+}
+
 static void on_ipc_client_event(void *ud, struct pipe *p, unsigned events)
 {
     struct nose_ctx *ctx = ud;
@@ -810,7 +873,7 @@ static void on_ipc_client_event(void *ud, struct pipe *p, unsigned events)
             int len = nl - (char *)buf;
             snprintf(line, sizeof(line), "%.*s", len, (char *)buf);
             pipe_read(p, NULL, len + 1);
-            process_command(ctx, line);
+            process_command(ctx, line, cl->is_terminal ? NULL : p);
         }
     }
 
@@ -845,8 +908,6 @@ static struct client *add_client(struct nose_ctx *ctx, struct pipe *p,
     ctx->clients[ctx->num_clients++] = cl;
 
     pipe_set_on_event(cl->conn, ctx, on_ipc_client_event);
-    char *msg = "Ready for commands.\n";
-    pipe_write(cl->conn, msg, strlen(msg));
 
     return cl;
 }
@@ -907,13 +968,13 @@ static void on_extcap_ctrl_in(void *ud, struct pipe *p, unsigned events)
     case 1: // Set
         switch (ctrl_number) {
         case 0: // blink
-            process_command(ctx, "blink_led");
+            process_command(ctx, "blink_led", NULL);
             handled = true;
             break;
         case 3: { // command
             char cmd[1 << 16];
             snprintf(cmd, sizeof(cmd), "%.*s", size - 2, pkt + 6);
-            process_command(ctx, cmd);
+            process_command(ctx, cmd, NULL);
             // Reset the textbox
             if (ctx->extcap_ctrl_out) {
                 uint8_t header[6] = {'T', 0, 0, 2, 3, 1};
@@ -1350,7 +1411,7 @@ int main(int argc, char **argv)
         goto error_exit;
 
     if (strcmp(ctx->opts.device, "help") == 0) {
-        process_command(ctx, "device_list");
+        process_command(ctx, "device_list", NULL);
         flush_log(ctx);
         exit(0);
     }

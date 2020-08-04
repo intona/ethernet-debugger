@@ -1424,13 +1424,7 @@ int main(int argc, char **argv)
         goto error_exit;
     }
 
-    bool extcap_noerror = handle_extcap(ctx);
-
-    if (ctx->extcap_active) {
-
-    }
-
-    if (!extcap_noerror)
+    if (!handle_extcap(ctx))
         goto error_exit;
 
     if (strcmp(ctx->opts.device, "none") != 0) {

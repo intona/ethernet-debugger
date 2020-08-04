@@ -31,7 +31,7 @@
 #define HAVE_POSIX 1
 #endif
 
-#ifdef __GNU_C__
+#ifdef __GNUC__
     #if defined(__MINGW32__)
         #define PRINTF_FORMAT(a, b) __attribute__((format(gnu_printf, a, b)))
     #else
@@ -121,7 +121,7 @@ void *xalloc_impl(size_t size, const char *file, int line);
 
 // This macro returns the type of its argument. Since this is non-standard, the
 // fallback returns void*.
-#ifdef __GNU_C__
+#ifdef __GNUC__
 #define TYPEOF(ptrtype) __typeof__(ptrtype)
 #else
 #define TYPEOF(ptrtype) void *

@@ -1286,7 +1286,7 @@ static void enable_extcap_mode(struct nose_ctx *ctx)
 static bool handle_extcap(struct nose_ctx *ctx)
 {
     if (ctx->opts.extcap_interfaces) {
-        printf("extcap {version=1.0}{help=https://intona.eu}\n");
+        printf("extcap {version=1.0}{help=https://intona.eu/doc/ethernet-debugger}\n");
 
         libusb_device **list = NULL;
         libusb_get_device_list(usb_thread_libusb_context(ctx->global->usb_thr),

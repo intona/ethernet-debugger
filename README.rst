@@ -11,6 +11,11 @@ This software is copyrighted by Intona Technology GmbH.
 This software is licensed GPL 3.0 or later. See the following link for details,
 and the full license text: https://www.gnu.org/licenses/gpl-3.0.html
 
+Documentation
+=============
+
+The complete user-guide is located here: https://intona.eu/doc/ethernet-debugger
+
 Build instructions
 ==================
 

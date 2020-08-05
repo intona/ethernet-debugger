@@ -212,6 +212,20 @@ static void log_extcap(struct nose_ctx *ctx, char *line)
     pipe_write(ctx->extcap_ctrl_out, line, line_len);
 }
 
+// For use with json_out_init_cb() + writing to a struct pipe in *ctx.
+static void jout_to_pipe_cb(void *ctx, const char *buf, size_t len)
+{
+    struct pipe *p = ctx;
+    pipe_write(p, (char *)buf, len);
+}
+
+// For use with json_out_init_cb() + writing to a struct logfn in *ctx.
+static void jout_to_log_cb(void *ctx, const char *buf, size_t len)
+{
+    struct logfn *log = ctx;
+    logline(*log, "%.*s", (int)len, buf);
+}
+
 static void flush_log(struct nose_ctx *ctx)
 {
     uint16_t tlen = 0;
@@ -235,16 +249,12 @@ static void flush_log(struct nose_ctx *ctx)
             // A proper protocol will need the log line be escaped or such, for
             // now achieve that by adding a seemingly redundant prefix.
             struct json_out jout;
-            char jout_buf[MAX_LOG_RECORD * 4];
-            json_out_init(&jout, jout_buf, sizeof(jout_buf));
+            json_out_init_cb(&jout, jout_to_pipe_cb, cl->conn);
             json_out_object_start(&jout);
             json_out_field_string(&jout, "type", "log");
             json_out_field_string(&jout, "msg", buf);
             json_out_object_end(&jout);
-            char *j = json_out_get_output(&jout);
-            if (!j)
-                j = "(error)";
-            pipe_write(cl->conn, j, strlen(j));
+            json_out_finish(&jout);
             pipe_write(cl->conn, "\n", 1);
         }
 
@@ -267,8 +277,11 @@ static void on_log_data(void *ud, struct event *ev)
 static void process_command(struct nose_ctx *ctx, char *cmd, struct pipe *p)
 {
     struct json_out jout;
-    char jout_buf[4096];
-    json_out_init(&jout, jout_buf, sizeof(jout_buf));
+    if (p) {
+        json_out_init_cb(&jout, jout_to_pipe_cb, p);
+    } else {
+        json_out_init_cb(&jout, jout_to_log_cb, &ctx->log);
+    }
 
     struct command_ctx cctx = {
         // Log output could be reformatted ad-hoc for IPC output. But for now,
@@ -281,14 +294,9 @@ static void process_command(struct nose_ctx *ctx, char *cmd, struct pipe *p)
 
     command_dispatch(command_list, &cctx, cmd);
 
-    char *s = cctx.jout ? json_out_get_output(cctx.jout) : NULL;
-    if (s) {
-        if (p) {
-            pipe_write(p, s, strlen(s));
-            pipe_write(p, "\n", 1);
-        } else {
-            LOG(&cctx, "%s\n", s);
-        }
+    if (cctx.jout) {
+        json_out_newline(cctx.jout);
+        json_out_finish(cctx.jout);
     }
 }
 

@@ -1,7 +1,7 @@
 About
 =====
 
-The is the host program / userspace driver for the Intona Ethernet Debugger.
+This is the host program / userspace driver for the Intona Ethernet Debugger.
 
 Copyright
 =========

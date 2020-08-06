@@ -208,7 +208,8 @@ void command_dispatch(const struct command_def *cmds, struct command_ctx *ctx,
     }
 
     if (!cmd_def) {
-        if (cmdname[0])
+        // Ignore whitespace or comment-only lines.
+        if (cmdname[0] && cmdname[0] != '#')
             LOG(ctx, "error: command %s not found\n", cmdname);
         goto done;
     }

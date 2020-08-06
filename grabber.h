@@ -105,16 +105,17 @@ void grabber_destroy(struct grabber *gr);
 
 // Per-port stats (one for each physical ethernet connector).
 struct grabber_port_stats {
+    uint64_t num_packets;   // number of total packets according to hardware
+    uint64_t num_bytes;     // number of total packet bytes received via USB
     uint64_t sw_frames;     // number of total packets captured (and not dropped)
     uint64_t sw_buffer_num; // number of frames currently in SW buffer
     size_t sw_buffer_sz;    // like sw_buffer_num, but in bytes
     size_t sw_buffer_sz_max;// total size of the sw_buffer
     uint64_t sw_dropped;    // number of packets dropped due to full SW buffer
     uint64_t hw_dropped;    // number of packets dropped in HW or host USB stack
-    uint64_t broken_packets;// number of packets with error flags set
+    uint64_t num_crcerr;    // number of packets with incorrect FCS
     uint64_t ts_problems;   // number of broken timestamps (internal problem)
     uint64_t overflows;     // number of known FIFO overflow events
-    uint32_t hw_packet_counter; // last received packet counter field
 };
 
 struct grabber_status {

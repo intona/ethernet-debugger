@@ -64,7 +64,7 @@ struct packet_fifo {
     // --- access by consumer only
     uint64_t dropped_total;     // sums any dropped frames since last frame
     uint64_t dropped_total_prev;// dropped_total before newest frame
-    uint64_t broken_packets;    // indirection for synchronization
+    uint64_t num_crcerr;        // indirection for synchronization
     uint8_t packet_buffer[MAX_ETH_FRAME_SIZE]; // temp. buffer for packet
     struct grabber_packet packet; // temp. packet memory
     struct grabber_interface gr_iface;
@@ -229,8 +229,8 @@ static struct grabber_packet *packet_fifo_read_next(struct grabber *gr,
                 fifo->frames_written - fifo->stats.sw_frames;
             fifo->stats.sw_buffer_sz =
                 have_packets ? byte_fifo_get_available(&fifo->data) : 0;
-            fifo->stats.broken_packets += fifo->broken_packets;
-            fifo->broken_packets = 0;
+            fifo->stats.num_crcerr += fifo->num_crcerr;
+            fifo->num_crcerr = 0;
         }
 
         if (read_fifo)
@@ -452,8 +452,8 @@ static void *writer_thread(void *ptr)
         // (depends on ethernet speed; use lowest tolerated gap for gigabit)
         if (pkt->interpacket_frame_gap < 8)
             flags |= 1u << 27; // "wrong Inter Frame Gap error"
-        if (flags)
-            gr->fifos[pkt->iface->port].broken_packets++;
+        if (pkt->fcs_error)
+            gr->fifos[pkt->iface->port].num_crcerr++;
         wbuf_write32(&buf, flags);
         // option: dropped packet count
         wbuf_write16(&buf, 4); // epb_dropcount
@@ -528,11 +528,18 @@ static void transmit_packet(struct grabber *gr, struct packet_fifo *fifo,
     pthread_mutex_lock(&gr->fifo_mutex);
 
     // with mod32 wraparound
-    fifo->stats.hw_dropped += info.packet_counter - fifo->hw_last_seq - 1;
+    uint32_t new_packets = info.packet_counter - fifo->hw_last_seq;
     fifo->hw_last_seq = info.packet_counter;
     // Don't report bogus missing frames at the start.
     if (!fifo->frames_written)
-        fifo->stats.hw_dropped = 0;
+        new_packets = 1;
+    // Should be impossible.
+    if (new_packets == 0)
+        new_packets = 1;
+
+    fifo->stats.hw_dropped += new_packets - 1;
+    fifo->stats.num_packets += new_packets;
+    fifo->stats.num_bytes += packet_len;
 
     uint64_t ts = SC_INFO_TIMESTAMP(info);
 
@@ -557,8 +564,6 @@ static void transmit_packet(struct grabber *gr, struct packet_fifo *fifo,
     } else {
         fifo->stats.sw_dropped++;
     }
-
-    fifo->stats.hw_packet_counter = fifo->hw_last_seq;
 
     pthread_mutex_unlock(&gr->fifo_mutex);
 }

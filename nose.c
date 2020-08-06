@@ -174,6 +174,10 @@ struct nose_ctx {
     struct event *log_event;
     struct client **clients;
     size_t num_clients;
+    struct phy_status prev_phy_st[2];
+    uint64_t last_link_up_time[2]; // in get_time_us()
+    uint64_t last_link_down_time[2]; // in get_time_us()
+    uint64_t num_link_changes[2];
 };
 
 struct client {
@@ -375,6 +379,18 @@ static void on_phy_change(void *ud, struct event *ev)
         LOG(ctx, "PHY %d: link=%s speed=%dMBit\n", port, st.link ? "up" : "down",
             st.speed);
         timer_start(ctx->check_links_timer, 2000);
+
+        struct phy_status pst = ctx->prev_phy_st[port - 1];
+        if (pst.link != st.link || pst.speed != st.speed) {
+            ctx->num_link_changes[port - 1]++;
+
+            if (st.link) {
+                ctx->last_link_up_time[port - 1] = get_time_us();
+            } else {
+                ctx->last_link_down_time[port - 1] = get_time_us();
+            }
+        }
+        ctx->prev_phy_st[port - 1] = st;
     }
 }
 
@@ -521,33 +537,31 @@ static void on_grabber_status_timer(void *ud, struct timer *t)
         struct grabber_port_stats pst = st.port_stats[p];
         struct grabber_port_stats pst_prev = ctx->grabber_status_prev.port_stats[p];
 
+        double last_link_up = ctx->last_link_up_time[p]
+            ? (get_time_us() - ctx->last_link_up_time[p]) / 1e6 : 0;
+        double last_link_down = ctx->last_link_down_time[p]
+            ? (get_time_us() - ctx->last_link_down_time[p]) / 1e6 : 0;
+
+        const int mib = 1024 * 1024;
+
         LOG(ctx,
-            " Port %zd: SW packets (delta): %"PRIu64"\n"
-            "         SW dropped (delta): %"PRId64"\n"
-            "         HW dropped (delta): %"PRId64"\n"
-            "         Packets behind: %"PRId64"\n"
-            "         Packet buffer used: %zu MiB / %zu MiB\n"
-            "         Total SW packets: %"PRId64"\n"
-            "         Total SW dropped: %"PRId64"\n"
-            "         Total HW dropped: %"PRId64"\n"
-            "         Total broken packets: %"PRId64"\n"
-            "         HW FIFO overflows: %"PRIu64"\n"
-            "         TS problems: %"PRIu64"\n"
-            "         HW packet counter: 0x%"PRIx32"\n",
+            " Port %zd: Packets transmitted (delta): %"PRIu64" (%"PRIu64")\n"
+            "         Bytes captured (delta): %"PRId64" MiB (%"PRIu64" MiB)\n"
+            "         CRC errors (delta): %"PRId64" (%"PRIu64")\n"
+            "         Times silence last link up / down: %.1fs / %.1fs\n"
+            "         Link up / down changes: %"PRIu64"\n"
+            "         Buffer fill: %.0f%% (%"PRId64" overflows)\n",
             p,
-            pst.sw_frames - pst_prev.sw_frames,
-            pst.sw_dropped - pst_prev.sw_dropped,
-            pst.hw_dropped - pst_prev.hw_dropped,
-            pst.sw_buffer_num,
-            pst.sw_buffer_sz / (1024 * 1024),
-            pst.sw_buffer_sz_max / (1024 * 1024),
-            pst.sw_frames,
-            pst.sw_dropped,
-            pst.hw_dropped,
-            pst.broken_packets,
-            pst.overflows,
-            pst.ts_problems,
-            pst.hw_packet_counter);
+            pst.num_packets,
+            pst.num_packets - pst_prev.num_packets,
+            pst.num_bytes / mib,
+            (pst.num_bytes - pst_prev.num_bytes) / mib,
+            pst.num_crcerr,
+            pst.num_crcerr - pst_prev.num_crcerr,
+            last_link_up, last_link_down,
+            ctx->num_link_changes[p],
+            100 * pst.sw_buffer_sz / (double)pst.sw_buffer_sz_max,
+            pst.overflows + (pst.sw_dropped != pst_prev.sw_dropped));
     }
 
     ctx->grabber_status_prev = st;

@@ -55,6 +55,9 @@ void logline(struct logfn ctx, const char *fmt, ...);
 // that struct has a "struct logfn log;" field.
 #define LOG(ctx, ...) logline((ctx)->log, __VA_ARGS__)
 
+// Similar convention as with LOG(), but (by convention) lower verbosity level.
+#define HINT(ctx, ...) logline((ctx)->loghint, __VA_ARGS__)
+
 // Write output to stdio. ctx is a FILE*. If ctx==NULL, stderr is used.
 void logfn_stdio(void *ctx, const char *fmt, va_list va);
 

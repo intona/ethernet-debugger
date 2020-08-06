@@ -18,6 +18,9 @@ struct global {
     // All terminal output should go through this.
     struct logfn log;
 
+    // Same as log, but for lower verbosity messages.
+    struct logfn loghint;
+
     // We always need USB anyway, so it may as well be global.
     struct usb_thread *usb_thr;
 };

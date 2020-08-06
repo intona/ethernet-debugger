@@ -44,6 +44,7 @@ extern char **environ;
 static const struct command_def command_list[];
 
 struct options {
+    int64_t verbosity;
     bool run_selftest;
     char *init_serial;
     bool run_wireshark;
@@ -67,6 +68,10 @@ struct options {
 };
 
 const struct option_def option_list[] = {
+    {"verbosity", offsetof(struct options, verbosity),
+        COMMAND_PARAM_TYPE_INT64,
+        "Log verbosity level: 0 silent, 1 normal, 2 verbose messages.",
+        .flags = COMMAND_FLAG_RUNTIME},
     {"selftest", offsetof(struct options, run_selftest),
         COMMAND_PARAM_TYPE_BOOL,
         "Run internal device initialization and self-test."},
@@ -137,6 +142,12 @@ const struct option_def option_list[] = {
     {0}
 };
 
+static const struct options option_defs = {
+    .verbosity = 1,
+    .softbuf = 512 * 1024 * 1024,
+    .usbbuf = 2 * 1024 * 1024,
+};
+
 struct nose_ctx {
     struct event_loop *ev;
     struct global *global;
@@ -173,11 +184,14 @@ struct client {
 
 #define MAX_LOG_RECORD 512
 
-static void log_write(void *pctx, const char *fmt, va_list va)
+static void log_write_lev(void *pctx, const char *fmt, va_list va, int lev)
 {
     struct nose_ctx *ctx = pctx;
     char buf[MAX_LOG_RECORD + 1];
     vsnprintf(buf, sizeof(buf), fmt, va);
+
+    if (lev > ctx->opts.verbosity)
+        return;
 
     if (!ctx->log_indirect)
         printf("%s", buf);
@@ -192,6 +206,16 @@ static void log_write(void *pctx, const char *fmt, va_list va)
         cur += len + (cur[len] == '\n');
     }
     event_signal(ctx->log_event);
+}
+
+static void log_write(void *pctx, const char *fmt, va_list va)
+{
+    log_write_lev(pctx, fmt, va, 1);
+}
+
+static void log_write_hint(void *pctx, const char *fmt, va_list va)
+{
+    log_write_lev(pctx, fmt, va, 2);
 }
 
 static void log_extcap(struct nose_ctx *ctx, char *line)
@@ -1401,14 +1425,12 @@ int main(int argc, char **argv)
     if (!byte_fifo_alloc(&ctx->log_fifo, 64 * 1024))
         abort();
     ctx->global->log = (struct logfn){ctx, log_write};
+    ctx->global->loghint = (struct logfn){ctx, log_write_hint};
     ctx->log = ctx->global->log;
 
     event_loop_set_on_terminate(ev, ctx, on_terminate);
 
-    // Command line defaults (where not 0/false/"").
-    ctx->opts.softbuf = 512 * 1024 * 1024;
-    ctx->opts.usbbuf = 2 * 1024 * 1024;
-
+    ctx->opts = option_defs;
     options_init_allocs(option_list, &ctx->opts);
 
     if (!options_parse(ctx->log, option_list, &ctx->opts, argv))

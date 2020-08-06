@@ -85,6 +85,7 @@ struct grabber {
     char *filename;
     struct device *device;
     struct logfn log;
+    struct logfn loghint;
 
     struct usb_ep eps[2];
 
@@ -495,24 +496,24 @@ static void transmit_packet(struct grabber *gr, struct packet_fifo *fifo,
 
     // Yes, decode_packed_frames() could still pass such frames.
     if (size < sizeof(info)) {
-        LOG(gr, "port %u: error: discarding broken frame (%zd bytes)\n",
-            fifo->interface, size);
+        HINT(gr, "port %u: error: discarding broken frame (%zd bytes)\n",
+             fifo->interface, size);
         return;
     }
 
     memcpy(&info, data + size - sizeof(info), sizeof(info));
 
     if (info.magic != 0xABCD) {
-        LOG(gr, "port %u: error: discarding broken frame (no footer)\n",
-            fifo->interface);
+        HINT(gr, "port %u: error: discarding broken frame (no footer)\n",
+             fifo->interface);
         return;
     }
 
     size_t packet_space = size - sizeof(info);
     size_t packet_len = info.payload_bytecount;
     if (packet_space != ((packet_len  + 3) & (~(size_t)3))) {
-        LOG(gr, "port: %u: error: mismatching packet payload size: %zd vs. %zd\n",
-            fifo->interface, packet_space, packet_len);
+        HINT(gr, "port: %u: error: mismatching packet payload size: %zd vs. %zd\n",
+             fifo->interface, packet_space, packet_len);
         // FIFO consumer must know packet allocation size, so this is mandatory.
         info.payload_bytecount = packet_space;
     }
@@ -543,9 +544,9 @@ static void transmit_packet(struct grabber *gr, struct packet_fifo *fifo,
         gr->system_start_time = get_time_us() * 1000 - ts;
 
     if (ts <= fifo->last_hw_ts) {
-        LOG(gr, "port %u: warning: hardware packet time is going backwards: "
-            "0x%"PRIx64" -> 0x%"PRIx64"\n",
-            fifo->interface, fifo->last_hw_ts, ts);
+        HINT(gr, "port %u: warning: hardware packet time is going backwards: "
+             "0x%"PRIx64" -> 0x%"PRIx64"\n",
+             fifo->interface, fifo->last_hw_ts, ts);
         fifo->stats.ts_problems++;
     }
     fifo->last_hw_ts = ts;
@@ -573,7 +574,7 @@ static void decode_packed_frames(struct grabber *gr, int interface,
     }
 
     if (size < sizeof(struct packet_footer)) {
-        LOG(gr, "port %u: error: short USB packet\n", fifo->interface);
+        HINT(gr, "port %u: error: short USB packet\n", fifo->interface);
         return;
     }
 
@@ -582,22 +583,22 @@ static void decode_packed_frames(struct grabber *gr, int interface,
     memcpy(&footer, buf + payload_size, sizeof(footer));
 
     if (footer.magic != 0x63E7) {
-        LOG(gr, "port %u: error: incorrect USB footer magic: 0x%x\n",
-            fifo->interface, footer.magic);
+        HINT(gr, "port %u: error: incorrect USB footer magic: 0x%x\n",
+             fifo->interface, footer.magic);
         return;
     }
 
     if (fifo->synced && footer.seq_counter != (uint16_t)(fifo->seq_counter + 1)) {
-        LOG(gr, "port %u: warning: packet counter going backwards: %u -> %u\n",
-            fifo->interface, fifo->seq_counter, footer.seq_counter);
+        HINT(gr, "port %u: warning: packet counter going backwards: %u -> %u\n",
+             fifo->interface, fifo->seq_counter, footer.seq_counter);
     }
     fifo->seq_counter = footer.seq_counter;
 
     // Idle frames.
     if (footer.last_frame_ptr == 0xFFFFu) {
         if (size != 16) {
-            LOG(gr, "port %u: error: broken frame of size %zu\n",
-                fifo->interface, size);
+            HINT(gr, "port %u: error: broken frame of size %zu\n",
+                 fifo->interface, size);
             return;
         }
         uint32_t i[2];
@@ -607,9 +608,9 @@ static void decode_packed_frames(struct grabber *gr, int interface,
 
         pthread_mutex_lock(&gr->fifo_mutex);
         if (ts <= fifo->last_hw_ts) {
-            LOG(gr, "port %u: warning: hardware idle time is going backwards: "
-                "ts=%"PRIx64" fifo->last_hw_ts=%"PRIx64"\n",
-                fifo->interface, ts, fifo->last_hw_ts);
+            HINT(gr, "port %u: warning: hardware idle time is going backwards: "
+                 "ts=%"PRIx64" fifo->last_hw_ts=%"PRIx64"\n",
+                 fifo->interface, ts, fifo->last_hw_ts);
             fifo->stats.ts_problems++;
         }
         fifo->last_hw_ts = ts;
@@ -625,8 +626,8 @@ static void decode_packed_frames(struct grabber *gr, int interface,
         return;
 
     if (footer.last_frame_ptr > payload_size || (footer.last_frame_ptr & 3)) {
-        LOG(gr, "port: %u: error: invalid footer: %04zx/%04x\n", fifo->interface,
-            size, footer.last_frame_ptr);
+        HINT(gr, "port: %u: error: invalid footer: %04zx/%04x\n", fifo->interface,
+             size, footer.last_frame_ptr);
         return;
     }
 
@@ -651,13 +652,13 @@ static void decode_packed_frames(struct grabber *gr, int interface,
 
             memcpy(&info, buf + pos - sizeof(info), sizeof(info));
             if (info.magic != 0xABCD) {
-                LOG(gr, "port %u: error: discarding packet with broken magic\n",
-                    fifo->interface);
+                HINT(gr, "port %u: error: discarding packet with broken magic\n",
+                     fifo->interface);
                 return;
             }
             if (info.errors & (1 << 14)) {
-                LOG(gr, "port: %u: warning: hardware FIFO overflow encountered\n",
-                    fifo->interface);
+                HINT(gr, "port: %u: warning: hardware FIFO overflow encountered\n",
+                     fifo->interface);
                 // Discard this, and all before.
                 fifo->synced = false;
                 fifo->split_buf_size = 0;
@@ -667,8 +668,8 @@ static void decode_packed_frames(struct grabber *gr, int interface,
                 return;
             }
             if (info.payload_bytecount >= sizeof(fifo->split_buf)) {
-                LOG(gr, "port %u: error: discarding packet with broken frame size\n",
-                    fifo->interface);
+                HINT(gr, "port %u: error: discarding packet with broken frame size\n",
+                     fifo->interface);
                 return;
             }
             int32_t psize = (info.payload_bytecount + 3) & (~(size_t)3);
@@ -683,8 +684,8 @@ static void decode_packed_frames(struct grabber *gr, int interface,
 
     if (pos > 0) {
         if (sizeof(fifo->split_buf) - fifo->split_buf_size < pos) {
-            LOG(gr, "port %u: error: discarding packet with overlong split frame (head)\n",
-                fifo->interface);
+            HINT(gr, "port %u: error: discarding packet with overlong split frame (head)\n",
+                 fifo->interface);
             return;
         }
         memcpy(fifo->split_buf + fifo->split_buf_size, buf, pos);
@@ -712,8 +713,8 @@ static void decode_packed_frames(struct grabber *gr, int interface,
         size_t offset = pos_list[MAX_FRAMES_PER_PACKET - 1];
         size_t len = payload_size - offset;
         if (sizeof(fifo->split_buf) - fifo->split_buf_size < len) {
-            LOG(gr, "port %u: error: discarding packet with overlong split frame (tail)\n",
-                fifo->interface);
+            HINT(gr, "port %u: error: discarding packet with overlong split frame (tail)\n",
+                 fifo->interface);
             return;
         }
         memcpy(fifo->split_buf + fifo->split_buf_size, buf + offset, len);
@@ -805,6 +806,7 @@ int grabber_start(struct global *global, struct grabber_options *opts)
     pthread_cond_init(&gr->fifo_wakeup, NULL);
 
     gr->log = global->log;
+    gr->loghint = global->loghint;
     gr->device = opts->device;
     gr->device->grabber = gr;
 

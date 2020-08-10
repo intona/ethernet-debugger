@@ -8,7 +8,7 @@ Copyright
 
 This software is copyrighted by Intona Technology GmbH.
 
-This software is licensed GPL 3.0 or later. See the following link for details,
+This software is licensed as GPL 3.0 or later. See the following link for details,
 and the full license text: https://www.gnu.org/licenses/gpl-3.0.html
 
 Documentation
@@ -31,6 +31,8 @@ Requirements:
 
 After installing the dependencies, run the following::
 
+    git clone https://github.com/intona/ethernet-debugger.git
+    cd ethernet-debugger
     git submodule init
     git submodule update
     meson build     # create build files in directory named "build"

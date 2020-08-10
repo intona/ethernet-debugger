@@ -4,6 +4,8 @@
 
 #include "global.h"
 
+extern const char version[];
+
 void run_init_and_test(struct global *global, char *device, char *serial);
 
 #endif

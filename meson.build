@@ -48,6 +48,11 @@ else
     sources += 'event_loop_posix.c'
 endif
 
+sources += vcs_tag(command: ['git', 'describe', '--always'],
+                   fallback: '<unknown>',
+                   input: 'version.c.in',
+                   output: 'version.c')
+
 executable('nose',
            sources,
            include_directories: incdir,

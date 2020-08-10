@@ -3,5 +3,6 @@
 .*
 *.exe
 /nose
+/version.c
 !.gitignore
 !.gitmodules

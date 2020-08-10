@@ -57,6 +57,7 @@ struct options {
     int64_t usbbuf;
     bool strip_frames;
     bool capture_stats;
+    bool print_version;
     char *extcap_version;
     bool extcap_interfaces;
     char *extcap_interface;
@@ -114,6 +115,9 @@ const struct option_def option_list[] = {
         COMMAND_PARAM_TYPE_BOOL,
         "Strip preamble, SFD, and FCS from ethernet frames.",
         .flags = COMMAND_FLAG_RUNTIME},
+    {"version", offsetof(struct options, print_version),
+        COMMAND_PARAM_TYPE_BOOL,
+        "Print host tool version and exit."},
     // For Wireshark's extcap interface.
     {"extcap-version", offsetof(struct options, extcap_version),
         COMMAND_PARAM_TYPE_STR,
@@ -800,6 +804,8 @@ done:
 static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
                         size_t num_params)
 {
+    LOG(cctx, "Host tool version: %s\n", version);
+
     struct device *dev = require_dev(cctx);
     if (!dev)
         return;
@@ -1457,6 +1463,11 @@ int main(int argc, char **argv)
     if (strcmp(ctx->opts.device, "help") == 0) {
         process_command(ctx, "device_list", NULL);
         flush_log(ctx);
+        exit(0);
+    }
+
+    if (ctx->opts.print_version) {
+        printf("Version: %s\n", version);
         exit(0);
     }
 

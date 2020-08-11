@@ -227,8 +227,7 @@ static struct grabber_packet *packet_fifo_read_next(struct grabber *gr,
             // Always update stats.
             fifo->stats.sw_buffer_num =
                 fifo->frames_written - fifo->stats.sw_frames;
-            fifo->stats.sw_buffer_sz =
-                have_packets ? byte_fifo_get_available(&fifo->data) : 0;
+            fifo->stats.sw_buffer_sz = byte_fifo_get_available(&fifo->data);
             fifo->stats.num_crcerr += fifo->num_crcerr;
             fifo->num_crcerr = 0;
         }

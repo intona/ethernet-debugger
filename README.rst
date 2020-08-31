@@ -24,10 +24,20 @@ Requirements:
 - A C11 compiler (gcc, clang)
 - libusb-1 library and header files
 - json-parser git submodule (https://github.com/intona/json-parser/)
+  (automatically checked out if you use the git submodule commands)
 - modern POSIX environment for Unix-like, or MinGW-w64 for win32
 - meson 0.53.0 (older releases might work, but they're usually plagued by bugs)
   (use your package manager, or "pip3 install meson" / "pip install meson")
 - little endian build target
+
+The following command should be sufficient to install the dependencies on
+Ubuntu::
+
+    sudo apt install build-essential meson libusb-1.0-0-dev
+
+At least Ubuntu 18.04 and later should work. The only real restriction is the
+version of the libusb API provided, and whether the meson package is recent
+enough.
 
 After installing the dependencies, run the following::
 

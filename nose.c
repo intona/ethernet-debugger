@@ -684,6 +684,40 @@ static void cmd_mdio_write(struct command_ctx *cctx, struct command_param *param
     }
 }
 
+static void cmd_set_speed(struct command_ctx *cctx, struct command_param *params,
+                          size_t num_params)
+{
+    struct device *dev = require_dev(cctx);
+    if (!dev)
+        return;
+
+    const char *mode = params[0].p_str;
+    int speed = 0;
+    int autoneg = 0;
+    if (strcmp(mode, "1000") == 0) {
+        speed = 2;
+    } else if (strcmp(mode, "100") == 0) {
+        speed = 1;
+    } else if (strcmp(mode, "10") == 0) {
+        speed = 0;
+    } else if (strcmp(mode, "auto") == 0) {
+        autoneg = 1;
+    }
+    uint16_t v = (1 << 15) |                // reset
+                 ((!!(speed & 1)) << 13) |  // speed select
+                 (!!((speed & 2)) << 6) |
+                 (1 << 8) |                 // full duplex
+                 (autoneg << 12);           // auto negotiation enable
+
+    int r = device_mdio_write(dev, 3, 0, v);
+    if (r >= 0) {
+        LOG(cctx, "setting speed to %s\n", mode);
+    } else {
+        LOG(cctx, "error %d\n", r);
+        cctx->success = false;
+    }
+}
+
 static void cmd_cfg_packet(struct command_ctx *cctx, struct command_param *params,
                            size_t num_params)
 {
@@ -1081,6 +1115,8 @@ static const struct command_def command_list[] = {
         {"address", COMMAND_PARAM_TYPE_INT64, NULL, "MDIO register address"},
         {"value", COMMAND_PARAM_TYPE_INT64, NULL, "new register value"},
         {"page", COMMAND_PARAM_TYPE_INT64, "-1", "Register page (-1=NOP)"}, }},
+    {"speed", "Set Ethernet speed on both ports", cmd_set_speed, {
+        {"speed", COMMAND_PARAM_TYPE_STR, "10, 100, 1000, or auto"}, }},
     {"disrupt", "Packet disruptor", cmd_disrupt, {
         PHY_SELECT,
         {"drop", COMMAND_PARAM_TYPE_BOOL, "false", "drop only"},

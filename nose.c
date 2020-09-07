@@ -702,6 +702,10 @@ static void cmd_set_speed(struct command_ctx *cctx, struct command_param *params
         speed = 0;
     } else if (strcmp(mode, "auto") == 0) {
         autoneg = 1;
+    } else {
+        LOG(cctx, "argument must be one of: 10 100 1000 auto\n");
+        cctx->success = false;
+        return;
     }
     uint16_t v = (1 << 15) |                // reset
                  ((!!(speed & 1)) << 13) |  // speed select

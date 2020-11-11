@@ -213,13 +213,15 @@ static void *irq_thread(void *p)
 
         int regs[2];
 
-        // Read register 19 (interrupt status register), which resets it.
-        // Important, since IRQs are level triggered.
-        device_mdio_read_both(dev, MDIO_PAGE_REG(0, 19), regs);
+        if (dev->fw_version < 6) {
+            // Read register 19 (interrupt status register), which resets it.
+            // Important, since IRQs are level triggered.
+            device_mdio_read_both(dev, MDIO_PAGE_REG(0, 19), regs);
 
-        // ACK interrupt (interrupt logic outside of PHY).
-        uint32_t ack_cmd = 4 << 24;
-        device_config_raw(dev, &ack_cmd, 1, NULL, NULL);
+            // ACK interrupt (interrupt logic outside of PHY).
+            uint32_t ack_cmd = 4 << 24;
+            device_config_raw(dev, &ack_cmd, 1, NULL, NULL);
+        }
 
         // Read register 17 (copper status) and update known PHY status.
         if (device_mdio_read_both(dev, MDIO_PAGE_REG(0, 17), regs) >= 0) {
@@ -384,6 +386,7 @@ struct device *device_open_with_handle(struct global *global,
                     "supports only version 1. Outdated software?\n", major_dev_ver);
         goto fail;
     }
+    dev->fw_version = desc.bcdDevice & 0xFF;
 
     dev->cfg_in = (struct usb_ep){
         .dev = udev,
@@ -414,28 +417,30 @@ struct device *device_open_with_handle(struct global *global,
     if (!usb_ep_in_add(global->usb_thr, &dev->debug_in, 6, 16 * 1024))
         goto fail;
 
-    bool mdio_init_ok = true;
+    if (dev->fw_version < 6) {
+        bool mdio_init_ok = true;
 
-    // Configure the interrupt pin
-    r = device_mdio_write(dev, DEV_PORT_ALL, MDIO_PAGE_REG(3, 18),
-                          (2 << 12) |   // pulse stretch
-                          (1 << 8) |    // blink rate
-                          (1 << 7) |    // int enable
-                          (1 << 2) |    // pulse
-                          (1 << 0));    // pulse
-    mdio_init_ok &= r >= 0;
+        // Configure the interrupt pin
+        r = device_mdio_write(dev, DEV_PORT_ALL, MDIO_PAGE_REG(3, 18),
+                            (2 << 12) |   // pulse stretch
+                            (1 << 8) |    // blink rate
+                            (1 << 7) |    // int enable
+                            (1 << 2) |    // pulse
+                            (1 << 0));    // pulse
+        mdio_init_ok &= r >= 0;
 
-    // Interrupt enable
-    r = device_mdio_write(dev, DEV_PORT_ALL, 18,
-                          (1 << 10) |   // link status changed interrupt
-                          (1 << 11) |   // auto-negotiation completed interrupt
-                          (1 << 14) |   // speed changed interrupt
-                          (1 << 15));   // auto-negotiation error interrupt
-    mdio_init_ok &= r >= 0;
+        // Interrupt enable
+        r = device_mdio_write(dev, DEV_PORT_ALL, 18,
+                            (1 << 10) |   // link status changed interrupt
+                            (1 << 11) |   // auto-negotiation completed interrupt
+                            (1 << 14) |   // speed changed interrupt
+                            (1 << 15));   // auto-negotiation error interrupt
+        mdio_init_ok &= r >= 0;
 
-    // Can happen if you try to reopen the device after aborted FW update.
-    if (!mdio_init_ok)
-        LOG(global, "Warning: could not set mdio registers.\n");
+        // Can happen if you try to reopen the device after aborted FW update.
+        if (!mdio_init_ok)
+            LOG(global, "Warning: could not set mdio registers.\n");
+    }
 
     dev->irq_pending = true;
     dev->irq_thread_valid = true;

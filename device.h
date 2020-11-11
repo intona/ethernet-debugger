@@ -114,6 +114,7 @@ struct device {
     struct usb_ep cfg_in, cfg_out, debug_in;
     pthread_mutex_t lock;
     pthread_cond_t cfg_wait, irq_wait;
+    int fw_version;
     // --- Protected by mutex.
     bool cfg_expect_pkt;            // something sent a packet; waiting for reply
     bool cfg_send_err;              // sending the packet actually errored

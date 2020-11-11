@@ -358,11 +358,11 @@ static void on_check_links(void *ud, struct timer *t)
     if (speed[0] == 10 || speed[1] == 10) {
         LOG(ctx, "Warning: 10Mbit mode is not supported.\n");
     } else if (speed[0] && speed[1] && speed[0] != speed[1]) {
-        LOG(ctx, "Warning: links have different speed. Communication is blocked!\n");
+        LOG(ctx, "Warning: links have different speed. Communication is blocked.\n");
     } else if (!speed[0] != !speed[1]) {
-        LOG(ctx, "Warning: only one port has a link!\n");
+        LOG(ctx, "Warning: only one port has a link.\n");
     } else if (!speed[0] && !speed[1]) {
-        LOG(ctx, "Warning: no link!\n");
+        LOG(ctx, "Warning: no link.\n");
     }
 }
 

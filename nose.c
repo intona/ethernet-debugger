@@ -376,15 +376,12 @@ static void on_phy_change(void *ud, struct event *ev)
     if (!dev)
         return;
 
+    bool any_link_changes = false;
     for (int port = 1; port <= 2; port++) {
+        struct phy_status pst = ctx->prev_phy_st[port - 1];
         struct phy_status st;
         device_get_phy_status(dev, port, &st);
-        // We don't really know which port or what changed, so whatever.
-        LOG(ctx, "PHY %d: link=%s speed=%dMBit\n", port, st.link ? "up" : "down",
-            st.speed);
-        timer_start(ctx->check_links_timer, 2000);
 
-        struct phy_status pst = ctx->prev_phy_st[port - 1];
         if (pst.link != st.link || pst.speed != st.speed) {
             ctx->num_link_changes[port - 1]++;
 
@@ -393,8 +390,22 @@ static void on_phy_change(void *ud, struct event *ev)
             } else {
                 ctx->last_link_down_time[port - 1] = get_time_us();
             }
+
+            any_link_changes = true;
         }
+
         ctx->prev_phy_st[port - 1] = st;
+    }
+
+    if (any_link_changes) {
+        for (int port = 1; port <= 2; port++) {
+            struct phy_status st = ctx->prev_phy_st[port - 1];
+
+            LOG(ctx, "PHY %d: link=%s speed=%dMBit\n", port,
+                st.link ? "up" : "down", st.speed);
+        }
+
+        timer_start(ctx->check_links_timer, 2000);
     }
 }
 

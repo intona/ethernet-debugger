@@ -644,19 +644,37 @@ static void cmd_mdio_read(struct command_ctx *cctx, struct command_param *params
     if (!dev)
         return;
 
+    int phy = params[0].p_int;
+    bool both = phy == 3;
     int reg = params[1].p_int;
     int p = params[2].p_int;
     if (p >= 0)
         reg = MDIO_PAGE_REG(p, reg);
 
-    int r = device_mdio_read(dev, params[0].p_int, reg);
+    int r;
+    int regs[2] = {-1, -1};
+    if (both) {
+        r = device_mdio_read_both(dev, reg, regs);
+    } else {
+        r = device_mdio_read(dev, phy, reg);
+    }
+
     cctx->success = r >= 0;
 
     if (cctx->jout) {
-        json_out_field_int(cctx->jout, "result", r);
+        if (cctx->success && both) {
+            json_out_field_int(cctx->jout, "result_phy0", regs[0]);
+            json_out_field_int(cctx->jout, "result_phy1", regs[1]);
+        } else {
+            json_out_field_int(cctx->jout, "result", r);
+        }
     } else {
         if (cctx->success) {
-            LOG(cctx, "result: value=0x%04x\n", r);
+            if (both) {
+                LOG(cctx, "result: value=0x%04x/0x%04x\n", regs[0], regs[1]);
+            } else {
+                LOG(cctx, "result: value=0x%04x\n", r);
+            }
         } else {
             LOG(cctx, "error %d\n", r);
         }

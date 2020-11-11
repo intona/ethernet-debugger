@@ -215,14 +215,14 @@ static void *irq_thread(void *p)
 
         // Read register 19 (interrupt status register), which resets it.
         // Important, since IRQs are level triggered.
-        device_mdio_read_both(dev, 19, regs);
+        device_mdio_read_both(dev, MDIO_PAGE_REG(0, 19), regs);
 
         // ACK interrupt (interrupt logic outside of PHY).
         uint32_t ack_cmd = 4 << 24;
         device_config_raw(dev, &ack_cmd, 1, NULL, NULL);
 
         // Read register 17 (copper status) and update known PHY status.
-        if (device_mdio_read_both(dev, 17, regs) >= 0) {
+        if (device_mdio_read_both(dev, MDIO_PAGE_REG(0, 17), regs) >= 0) {
             pthread_mutex_lock(&dev->lock);
 
             for (size_t phy = 0; phy < 2; phy++) {

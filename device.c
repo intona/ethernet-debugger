@@ -78,9 +78,9 @@ done:
 }
 
 // non-paged
-static int mdio_write(struct device *dev, int ports, int reg, int val)
+static int mdio_write(struct device *dev, unsigned ports, int reg, int val)
 {
-    if (reg < 0 || reg > 0x3F || val < 0 || val > 0xFFFF || ports < 0 || ports > 3)
+    if (reg < 0 || reg > 0x3F || val < 0 || val > 0xFFFF || ports > 3)
         return -1;
 
     uint32_t cmd = (ports << (24 + 6)) |        // PHY select
@@ -98,7 +98,7 @@ static int mdio_write(struct device *dev, int ports, int reg, int val)
     return 0;
 }
 
-static int mdio_read(struct device *dev, int ports, int reg, int val[2])
+static int mdio_read(struct device *dev, unsigned ports, int reg, int val[2])
 {
     int r = -1;
     bool page_set = false;
@@ -117,7 +117,7 @@ static int mdio_read(struct device *dev, int ports, int reg, int val[2])
         reg &= 0x3Fu;
     }
 
-    if (reg >= 0x40u || ports < 0 || ports > 3)
+    if (reg >= 0x40u || ports > 3)
         goto done;
 
     uint32_t cmd = (ports << (24 + 6)) |        // PHY select
@@ -144,7 +144,7 @@ done:
     return r;
 }
 
-int device_mdio_read(struct device *dev, int ports, int reg)
+int device_mdio_read(struct device *dev, unsigned ports, int reg)
 {
     int val[2];
     int r = mdio_read(dev, ports, reg, val);
@@ -162,7 +162,7 @@ int device_mdio_read_both(struct device *dev, int reg, int out_val[2])
     return mdio_read(dev, DEV_PORT_ALL, reg, out_val);
 }
 
-int device_mdio_write(struct device *dev, int ports, int reg, int val)
+int device_mdio_write(struct device *dev, unsigned ports, int reg, int val)
 {
     int r = -1;
     bool page_set = false;
@@ -517,7 +517,7 @@ struct device *device_open(struct global *global, const char *devname)
     return device_open_with_handle(global, handle);
 }
 
-bool device_inject_pkt(struct logfn logfn, struct device *dev, int ports,
+bool device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
                        int repeat, int gap, const void *data, size_t size)
 {
     device_cfg_lock(dev);

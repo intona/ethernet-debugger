@@ -53,7 +53,7 @@ int device_config_raw(struct device *dev, uint32_t *in_data, size_t in_num,
 // This command returns the register contents of the first selected port (i.e.
 // if DEV_PORT_ALL was passed, only the value for DEV_PORT_A is returned). Use
 // device_mdio_read_both() to read from two ports at once (nearly-atomically).
-int device_mdio_read(struct device *dev, int ports, int reg);
+int device_mdio_read(struct device *dev, unsigned ports, int reg);
 
 // Read a MDIO register from both ports. The reads are driven at the same MDIO
 // clock cycle, so the access happens mostly at the same time. Returns the
@@ -71,10 +71,10 @@ int device_mdio_read_both(struct device *dev, int reg, int out_val[2]);
 //  reg: MDIO register (can be a MDIO_PAGE_REG value)
 //  val: 16 bit value to write
 //  returns: ==0: success, <0: error code
-int device_mdio_write(struct device *dev, int ports, int reg, int val);
+int device_mdio_write(struct device *dev, unsigned ports, int reg, int val);
 
 // Send packet injector command. See cfg_interface.v.
-bool device_inject_pkt(struct logfn logfn, struct device *dev, int ports,
+bool device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
                        int repeat, int gap, const void *data, size_t size);
 
 // Get exclusive access to running configuration commands within the current

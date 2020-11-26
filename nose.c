@@ -175,6 +175,7 @@ struct nose_ctx {
     // Put all log output through a FIFO. Makes dealing with text from random
     // threads easier to deal with.
     struct byte_fifo log_fifo;
+    pthread_mutex_t log_fifo_writer_lock;
     struct event *log_event;
     struct client **clients;
     size_t num_clients;
@@ -209,8 +210,10 @@ static void log_write_lev(void *pctx, const char *fmt, va_list va, int lev)
     while (cur[0]) {
         size_t len = strcspn(cur, "\n");
         uint16_t tlen = MIN(len, MAX_LOG_RECORD);
+        pthread_mutex_lock(&ctx->log_fifo_writer_lock);
         // Silently discard if it doesn't fit in completely.
         byte_fifo_write_atomic_2(&ctx->log_fifo, &tlen, 2, cur, tlen);
+        pthread_mutex_unlock(&ctx->log_fifo_writer_lock);
         cur += len + (cur[len] == '\n');
     }
     event_signal(ctx->log_event);
@@ -1498,6 +1501,7 @@ int main(int argc, char **argv)
         .ev = ev,
         .global = &(struct global){{0}},
     };
+    pthread_mutex_init(&ctx->log_fifo_writer_lock, NULL);
 
     ctx->log_event = event_loop_create_event(ev);
     event_set_on_signal(ctx->log_event, ctx, on_log_data);
@@ -1647,6 +1651,7 @@ int main(int argc, char **argv)
     free(ctx->clients);
     byte_fifo_dealloc(&ctx->log_fifo);
     usb_thread_destroy(ctx->global->usb_thr);
+    pthread_mutex_destroy(&ctx->log_fifo_writer_lock);
     return 0;
 
 error_exit:

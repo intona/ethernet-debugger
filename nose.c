@@ -726,26 +726,52 @@ static void cmd_set_speed(struct command_ctx *cctx, struct command_param *params
     const char *mode = params[0].p_str;
     int speed = 0;
     int autoneg = 0;
+    int fw_speed_mode = -1;
     if (strcmp(mode, "1000") == 0) {
         speed = 2;
+        fw_speed_mode = 3;
     } else if (strcmp(mode, "100") == 0) {
         speed = 1;
+        fw_speed_mode = 2;
     } else if (strcmp(mode, "10") == 0) {
         speed = 0;
-    } else if (strcmp(mode, "auto") == 0) {
+        fw_speed_mode = 1;
+    } else if (strcmp(mode, "manual") == 0 || strcmp(mode, "auto") == 0) {
+        // "manual" is preferred; "auto" is supported for compatibility
         autoneg = 1;
+        fw_speed_mode = 4;
+    } else if (strcmp(mode, "same") == 0) {
+        if (dev->fw_version < 6) {
+            LOG(cctx, "this mode is not supported with this firmware version"
+                      " (a free update is available from Intona)\n");
+            cctx->success = false;
+        }
+        fw_speed_mode = 0;
     } else {
-        LOG(cctx, "argument must be one of: 10 100 1000 auto\n");
+        LOG(cctx, "argument must be one of: 10 100 1000 same manual\n");
         cctx->success = false;
         return;
     }
-    uint16_t v = (1 << 15) |                // reset
-                 ((!!(speed & 1)) << 13) |  // speed select
-                 (!!((speed & 2)) << 6) |
-                 (1 << 8) |                 // full duplex
-                 (autoneg << 12);           // auto negotiation enable
 
-    int r = device_mdio_write(dev, 3, 0, v);
+    int r;
+    if (dev->fw_version < 6) {
+        uint16_t v = (1 << 15) |                // reset
+                     ((!!(speed & 1)) << 13) |  // speed select
+                     (!!((speed & 2)) << 6) |
+                     (1 << 8) |                 // full duplex
+                     (autoneg << 12);           // auto negotiation enable
+
+        r = device_mdio_write(dev, 3, 0, v);
+    } else {
+        uint32_t cmd = (6 << 24) | (fw_speed_mode << 8) | 1;
+        uint32_t *res = NULL;
+        size_t res_num = 0;
+        r = device_config_raw(dev, &cmd, 1, &res, &res_num);
+        if (res_num < 2 || (res[1] & 0xFF))
+            r = -2;
+        free(res);
+    }
+
     if (r >= 0) {
         LOG(cctx, "setting speed to %s\n", mode);
     } else {
@@ -906,10 +932,10 @@ static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
     }
 
     free(res);
-    res = NULL;
-    res_num = 0;
 
     cmd = 5 << 24;
+    res = NULL;
+    res_num = 0;
     r = device_config_raw(dev, &cmd, 1, &res, &res_num);
     if (r < 0 || cmd == (uint32_t)-1 || res_num < 2) {
         LOG(cctx, "error: failed to retrieve hwrev\n");
@@ -917,8 +943,63 @@ static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
     } else {
         LOG(cctx, "HWREV: %"PRIu32"\n", res[1] & 7);
     }
-
     free(res);
+
+    LOG(cctx, "Persistent settings stored on the device:\n");
+    if (dev->fw_version < 6) {
+        LOG(cctx, " (none)\n");
+    } else {
+        int mode = -1;
+        uint32_t cmd = (6 << 24);
+        res = NULL;
+        res_num = 0;
+        r = device_config_raw(dev, &cmd, 1, &res, &res_num);
+        if (res_num >= 2 && !(res[1] & 0xFF))
+            mode = (res[1] >> 8) & 0xFF;
+        free(res);
+
+        const char *name = NULL;
+        switch (mode) {
+        case 0:  name = "same (force speed to PHY with lowest speed)"; break;
+        case 1:  name = "10"; break;
+        case 2:  name = "100"; break;
+        case 3:  name = "1000"; break;
+        case 4:  name = "manual (starts out with independent auto-negotiation)"; break;
+        case -1: name = "(failed to read setting)"; break;
+        }
+        if (!name)
+            name = stack_sprintf(30, "unknown (%d)", mode);
+        LOG(cctx, "    Forced speed: %s\n", name);
+    }
+}
+
+static void cmd_dev_reset_settings(struct command_ctx *cctx,
+                                   struct command_param *params,
+                                   size_t num_params)
+{
+    struct device *dev = require_dev(cctx);
+    if (!dev)
+        return;
+
+    if (dev->fw_version < 6) {
+        LOG(cctx, "Device with old firmware; no persistent settings.\n");
+        return;
+    }
+
+    uint32_t cmd = (7 << 24);
+    uint32_t *res = NULL;
+    size_t res_num = 0;
+    int r = device_config_raw(dev, &cmd, 1, &res, &res_num);
+    if (res_num < 2 || (res[1] & 0xFF))
+        r = -2;
+    free(res);
+
+    if (r < 0) {
+        LOG(cctx, "error: failed with code %d\n", r);
+        cctx->success = false;
+    } else {
+        LOG(cctx, "Settings reset; use hw_info to confirm.\n");
+    }
 }
 
 static void cmd_identify(struct command_ctx *cctx, struct command_param *params,
@@ -1174,6 +1255,8 @@ static const struct command_def command_list[] = {
         {"append_random", COMMAND_PARAM_TYPE_INT64, "0",
             "append this many bytes random data"}, }},
     {"hw_info", "Show hardware information", cmd_hw_info},
+    {"reset_device_settings", "Reset settings stored on the device to defaults.",
+        cmd_dev_reset_settings },
     {"cfg_packet", "Write raw config command packet", cmd_cfg_packet, {
         {"data", COMMAND_PARAM_TYPE_STR, NULL,
             "hex: 0x... 0x.. words, ABCD bytes"}, }},

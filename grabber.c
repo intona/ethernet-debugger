@@ -533,8 +533,10 @@ static void transmit_packet(struct grabber *gr, struct packet_fifo *fifo,
     if (!fifo->frames_written)
         new_packets = 1;
     // Should be impossible.
-    if (new_packets == 0)
+    if (new_packets == 0) {
+        HINT(gr, "port %u: error: broken packet counter\n", fifo->interface);
         new_packets = 1;
+    }
 
     fifo->stats.hw_dropped += new_packets - 1;
     fifo->stats.num_packets += new_packets;

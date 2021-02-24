@@ -858,7 +858,7 @@ static void cmd_inject(struct command_ctx *cctx, struct command_param *params,
     const char *s = params[1].p_str;
     bool raw = params[2].p_bool;
     int repeat = CLAMP(params[3].p_int, 0, 15);
-    int gap = CLAMP(params[4].p_int, 0, 0xFF);
+    int gap = CLAMP(params[4].p_int, 0, 0xFFFF);
     int random = CLAMP(params[5].p_int, 0, DEV_INJECT_ETH_BUF_SIZE);
 
     uint8_t *bytes = NULL;

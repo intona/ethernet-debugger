@@ -566,6 +566,8 @@ static void on_grabber_status_timer(void *ud, struct timer *t)
             " Port %zd: Packets transmitted (delta): %"PRIu64" (%"PRIu64")\n"
             "         Bytes captured (delta): %"PRId64" MiB (%"PRIu64" MiB)\n"
             "         CRC errors (delta): %"PRId64" (%"PRIu64")\n"
+            "         Packets dropped HW (delta): %"PRIu64" (%"PRIu64")\n"
+            "         Packets dropped SW (delta): %"PRIu64" (%"PRIu64")\n"
             "         Times since last link up / down: %.1fs / %.1fs\n"
             "         Link up / down changes: %"PRIu64"\n"
             "         Buffer fill: %.0f%% (%"PRId64" overflows)\n",
@@ -576,6 +578,10 @@ static void on_grabber_status_timer(void *ud, struct timer *t)
             (pst.num_bytes - pst_prev.num_bytes) / mib,
             pst.num_crcerr,
             pst.num_crcerr - pst_prev.num_crcerr,
+            pst.hw_dropped,
+            pst.hw_dropped - pst_prev.hw_dropped,
+            pst.sw_dropped,
+            pst.sw_dropped - pst_prev.sw_dropped,
             last_link_up, last_link_down,
             ctx->num_link_changes[p],
             100 * pst.sw_buffer_sz / (double)pst.sw_buffer_sz_max,

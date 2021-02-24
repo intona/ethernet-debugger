@@ -566,7 +566,7 @@ static void on_grabber_status_timer(void *ud, struct timer *t)
             " Port %zd: Packets transmitted (delta): %"PRIu64" (%"PRIu64")\n"
             "         Bytes captured (delta): %"PRId64" MiB (%"PRIu64" MiB)\n"
             "         CRC errors (delta): %"PRId64" (%"PRIu64")\n"
-            "         Times silence last link up / down: %.1fs / %.1fs\n"
+            "         Times since last link up / down: %.1fs / %.1fs\n"
             "         Link up / down changes: %"PRIu64"\n"
             "         Buffer fill: %.0f%% (%"PRId64" overflows)\n",
             p,

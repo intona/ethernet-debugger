@@ -88,6 +88,7 @@ void device_cfg_unlock(struct device *dev);
 struct phy_status {
     bool link;
     int speed; // 10/100/1000, 0 if not established
+    int master;
 };
 
 // This returns the last known PHY status. It does not actually communicate with

@@ -225,6 +225,10 @@ static void *irq_thread(void *p)
 
         // Read register 17 (copper status) and update known PHY status.
         if (device_mdio_read_both(dev, MDIO_PAGE_REG(0, 17), regs) >= 0) {
+            int reg10[2];
+            if (device_mdio_read_both(dev, MDIO_PAGE_REG(0, 10), reg10) < 0)
+                reg10[0] = reg10[1] = -1;
+
             pthread_mutex_lock(&dev->lock);
 
             for (size_t phy = 0; phy < 2; phy++) {
@@ -238,6 +242,9 @@ static void *irq_thread(void *p)
                     case 2: st->speed = 1000; break;
                     }
                 }
+                st->master = -1;
+                if (st->speed == 1000 && reg10[phy] >= 0)
+                    st->master = reg10[phy] & (1 << 14);
             }
 
             pthread_mutex_unlock(&dev->lock);

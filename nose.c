@@ -404,8 +404,12 @@ static void on_phy_change(void *ud, struct event *ev)
         for (int port = 1; port <= 2; port++) {
             struct phy_status st = ctx->prev_phy_st[port - 1];
 
-            LOG(ctx, "PHY %d: link=%s speed=%dMBit\n", port,
-                st.link ? "up" : "down", st.speed);
+            char *master = "";
+            if (st.master >= 0)
+                master = st.master ? " (master)" : " (slave)";
+
+            LOG(ctx, "PHY %d: link=%s speed=%dMBit%s\n", port,
+                st.link ? "up" : "down", st.speed, master);
         }
 
         timer_start(ctx->check_links_timer, 2000);

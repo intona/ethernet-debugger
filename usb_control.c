@@ -23,8 +23,10 @@ static bool get_device_name(libusb_device *dev, char *buf, size_t buf_size,
                   desc.idProduct == FW_USB_MAIN_PID))
         goto fail;
 
-    snprintf(buf, buf_size, "%d:%d", libusb_get_bus_number(dev),
-             libusb_get_port_number(dev));
+    snprintf(buf, buf_size, "%d:%d:%d",
+             libusb_get_bus_number(dev),
+             libusb_get_port_number(dev),
+             libusb_get_device_address(dev));
     return true;
 
 fail:

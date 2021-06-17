@@ -34,12 +34,23 @@ enum command_flags {
 
 #define COMMAND_MAX_PARAMS 10
 
+struct command_alias_val {
+    const char *user_val;
+    const char *param_val;
+};
+
 struct command_param_def {
     const char *name;
     enum command_param_type type;
     const char *def;                // if NULL => non-optional
     const char *desc;
+    // Aliases: replace user input matching .user_val with .param_val.
+    // Use PARAM_ALIASES to set this (it also terminates the array correctly).
+    const struct command_alias_val *aliases;
 };
+
+#define PARAM_ALIASES(...) \
+    .aliases = (const struct command_alias_val[]){__VA_ARGS__, {0}}
 
 struct command_param {
     const struct command_param_def *def;

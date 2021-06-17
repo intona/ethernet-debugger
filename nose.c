@@ -1222,7 +1222,8 @@ static void on_extcap_ctrl_out(void *ud, struct pipe *p, unsigned events)
 }
 
 #define PHY_SELECT \
-    {"phy", COMMAND_PARAM_TYPE_INT64, NULL, "Port/PHY (1=A, 2=B, 3=both)"}
+    {"phy", COMMAND_PARAM_TYPE_INT64, NULL, "Port/PHY", \
+     PARAM_ALIASES({"A", "1"}, {"B", "2"}, {"AB", "3"}, {"none", "0"})}
 
 static const struct command_def command_list[] = {
     {"help", "List commands", cmd_help},
@@ -1247,8 +1248,8 @@ static const struct command_def command_list[] = {
     {"disrupt", "Packet disruptor", cmd_disrupt, {
         PHY_SELECT,
         {"drop", COMMAND_PARAM_TYPE_BOOL, "false", "drop only"},
-        {"num", COMMAND_PARAM_TYPE_INT64, "1",
-            "number of packets (0=stop, 0xFF=all)"},
+        {"num", COMMAND_PARAM_TYPE_INT64, "1", "number of packets",
+            PARAM_ALIASES({"stop", "0"}, {"all", "0xFF"})},
         {"skip", COMMAND_PARAM_TYPE_INT64, "0",
             "let N packets pass every time"},
         {"offset", COMMAND_PARAM_TYPE_INT64, "22",
@@ -1260,7 +1261,8 @@ static const struct command_def command_list[] = {
         {"raw", COMMAND_PARAM_TYPE_BOOL, "false",
             "if true, do not add preamble/SFD/CRC"},
         {"repeat", COMMAND_PARAM_TYPE_INT64, "0",
-            "repeat count (15==continuous mode)"},
+            "repeat count (15==continuous mode)",
+            PARAM_ALIASES({"inf", "15"})},
         {"gap", COMMAND_PARAM_TYPE_INT64, "12", "minimum IPG before/after"},
         {"append_random", COMMAND_PARAM_TYPE_INT64, "0",
             "append this many bytes random data"}, }},

@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <strings.h>
 
 #include "cmd_parser.h"
 #include "json.h"
@@ -116,6 +117,19 @@ static bool parse_value(struct logfn log, const char *name,
                         struct command_param *data)
 {
     struct json_tok tmp;
+
+    if (el && el->type == JSON_TYPE_STRING && def->aliases) {
+        for (size_t n = 0; def->aliases[n].user_val; n++) {
+            if (strcasecmp(el->u.str, def->aliases[n].user_val) == 0) {
+                tmp = (struct json_tok){
+                    .type = JSON_TYPE_STRING,
+                    .u.str = (char *)def->aliases[n].param_val,
+                };
+                el = &tmp;
+                break;
+            }
+        }
+    }
 
     if (!el && def->def) {
         tmp.type = JSON_TYPE_STRING;

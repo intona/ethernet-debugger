@@ -408,7 +408,7 @@ static void on_phy_change(void *ud, struct event *ev)
             if (st.master >= 0)
                 master = st.master ? " (master)" : " (slave)";
 
-            LOG(ctx, "PHY %d: link=%s speed=%dMBit%s\n", port,
+            LOG(ctx, "PHY %s: link=%s speed=%dMBit%s\n", port_names[port],
                 st.link ? "up" : "down", st.speed, master);
         }
 
@@ -567,7 +567,7 @@ static void on_grabber_status_timer(void *ud, struct timer *t)
         const int mib = 1024 * 1024;
 
         LOG(ctx,
-            " Port %zd: Packets transmitted (delta): %"PRIu64" (%"PRIu64")\n"
+            " Port %s: Packets transmitted (delta): %"PRIu64" (%"PRIu64")\n"
             "         Bytes captured (delta): %"PRId64" MiB (%"PRIu64" MiB)\n"
             "         CRC errors (delta): %"PRId64" (%"PRIu64")\n"
             "         Packets dropped HW (delta): %"PRIu64" (%"PRIu64")\n"
@@ -575,7 +575,7 @@ static void on_grabber_status_timer(void *ud, struct timer *t)
             "         Times since last link up / down: %.1fs / %.1fs\n"
             "         Link up / down changes: %"PRIu64"\n"
             "         Buffer fill: %.0f%% (%"PRId64" overflows)\n",
-            p,
+            port_names[DEV_PORT_FROM_INDEX(p)],
             pst.num_packets,
             pst.num_packets - pst_prev.num_packets,
             pst.num_bytes / mib,

@@ -18,6 +18,12 @@ struct notifier;
 #define DEV_PORT_ALL    (DEV_PORT_A | DEV_PORT_B)
 #define DEV_PORT_NONE   0x0
 
+// DEV_PORT_* value from port index. The index must be 0 or 1.
+#define DEV_PORT_FROM_INDEX(index) (1u << (index))
+
+// Port names by DEV_PORT_* values.
+extern const char *const port_names[4];
+
 // If this value is passed, force MDIO commands to always set the page 0. This
 // is needed because we pretend there's a single address space, which doesn't
 // actually exist.

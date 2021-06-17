@@ -4,6 +4,8 @@
 #include "usb_control.h"
 #include "utils.h"
 
+const char *const port_names[4] = {"none", "A", "B", "AB"};
+
 // Note: internals still need to acquire dev->lock outside of this for fields
 //       which are used by other threads (e.g. libusb).
 void device_cfg_lock(struct device *dev)

@@ -86,7 +86,8 @@ void command_dispatch(const struct command_def *cmds, struct command_ctx *ctx,
 
 // Print human readable help via lfn.
 // cmds is like in command_dispatch.
-void command_list_help(const struct command_def *cmds, struct logfn lfn);
+void command_list_help(const struct command_def *cmds, struct logfn lfn,
+                       const char *filter);
 
 struct option_def {
     const char *name;

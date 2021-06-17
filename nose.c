@@ -338,7 +338,7 @@ static void process_command(struct nose_ctx *ctx, char *cmd, struct pipe *p)
 static void cmd_help(struct command_ctx *cctx, struct command_param *params,
                      size_t num_params)
 {
-    command_list_help(command_list, cctx->log);
+    command_list_help(command_list, cctx->log, params[0].p_str);
 }
 
 static void on_check_links(void *ud, struct timer *t)
@@ -1226,7 +1226,8 @@ static void on_extcap_ctrl_out(void *ud, struct pipe *p, unsigned events)
      PARAM_ALIASES({"A", "1"}, {"B", "2"}, {"AB", "3"}, {"none", "0"})}
 
 static const struct command_def command_list[] = {
-    {"help", "List commands", cmd_help},
+    {"help", "List commands", cmd_help, {
+        {"command", COMMAND_PARAM_TYPE_STR, "all", "show help for specific command"}, }},
     {"device_open", "Open USB device", cmd_dev_open, {
         {"name", COMMAND_PARAM_TYPE_STR, "default", "device name"}, }},
     {"device_close", "Close USB device", cmd_dev_close},
@@ -1274,7 +1275,7 @@ static const struct command_def command_list[] = {
             "hex: 0x... 0x.. words, ABCD bytes"}, }},
     {"blink_led", "Cause the main LED to blue for a moment.", cmd_identify },
     {"set", "Set a command line option.", cmd_set, {
-        {"name", COMMAND_PARAM_TYPE_STR, NULL, "option name (without '--')"},
+        {"name", COMMAND_PARAM_TYPE_STR, NULL, "option name, without '--'"},
         {"value", COMMAND_PARAM_TYPE_JSON, NULL, "new option value"}, }},
     {"exit", "Exit program", cmd_exit },
     {0}

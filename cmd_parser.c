@@ -429,32 +429,70 @@ static const char *get_type_help(enum command_param_type t)
     return "?";
 }
 
-void command_list_help(const struct command_def *cmds, struct logfn lfn)
+void command_list_help(const struct command_def *cmds, struct logfn lfn,
+                       const char *filter)
 {
-    logline(lfn, "List of commands:\n");
+    bool use_filter = false, any_matches = false;
 
     for (size_t c = 0; cmds[c].name; c++) {
         const struct command_def *cmd_def = &cmds[c];
 
-        logline(lfn, "  %s: %s\n", cmd_def->name, cmd_def->desc);
+        if (filter && filter[0] && strcasecmp(filter, "all") != 0) {
+            if (!use_filter)
+                logline(lfn, "Commands matching '%s':\n\n", filter);
+            use_filter = true;
+            if (strcasecmp(cmd_def->name, filter) != 0 &&
+                !strstr(cmd_def->desc, filter))
+                continue;
+            any_matches = true;
+        }
+
+        if (!use_filter && c == 0)
+            logline(lfn, "List of commands:\n\n");
+
+        logline(lfn, "  %s\n", cmd_def->name);
+        logline(lfn, "    %s\n", cmd_def->desc);
+
+        if (cmd_def->params[0].type)
+            logline(lfn, "\n    Parameters:\n");
 
         for (size_t p = 0; cmd_def->params[p].type; p++) {
             assert(p < COMMAND_MAX_PARAMS);
             const struct command_param_def *def = &cmd_def->params[p];
 
-            logline(lfn, "    %-10s %s (%s, %s%s)\n", def->name, def->desc,
-                    get_type_help(def->type),
-                    def->def ? "default: " : "",
-                    def->def ? def->def : "required parameter");
+            logline(lfn, "      %-15s %s\n", def->name, def->desc);
+            logline(lfn, "    %-17s Type: %s\n", "", get_type_help(def->type));
+            if (def->def) {
+                logline(lfn, "    %-17s Default: '%s'\n", "", def->def);
+            } else {
+                logline(lfn, "    %-17s Required parameter.\n", "");
+            }
+
+            char aliases[80] = {0};
+            int o = 0;
+            for (size_t n = 0; def->aliases && def->aliases[n].user_val; n++) {
+                o = snprintf_append(aliases, sizeof(aliases), o, "%s%s (%s)",
+                                    n ? ", " : "",
+                                    def->aliases[n].user_val,
+                                    def->aliases[n].param_val);
+            }
+            if (o > 0)
+                logline(lfn, "    %-17s Special values: %s\n", "", aliases);
         }
+
+        logline(lfn, "\n");
     }
 
-    logline(lfn, "Syntax: command param1 param2...\n");
-    logline(lfn, "Named parameters: command --paramname1=paramvalue1...\n");
-    logline(lfn, "Values can be quoted with \"...\" (or \'), some \\ escapes work.\n");
-    logline(lfn, "You can add a ' -- ' after the command name to avoid\n");
-    logline(lfn, "interpreting '--something...' as option name.\n");
-    logline(lfn, "Or: {\"command\":\"cmd-name\",\"paramname1\":\"paramvalue1\", ...}\n");
+    if (use_filter && !any_matches) {
+        logline(lfn, "No matches. Use 'help' to list all commands.\n");
+    } else {
+        logline(lfn, "Syntax: command param1 param2...\n");
+        logline(lfn, "Named parameters: command --paramname1=paramvalue1...\n");
+        logline(lfn, "Values can be quoted with \"...\" (or \'), some \\ escapes work.\n");
+        logline(lfn, "You can add a ' -- ' after the command name to avoid\n");
+        logline(lfn, "interpreting '--something...' as option name.\n");
+        logline(lfn, "Or: {\"command\":\"cmd-name\",\"paramname1\":\"paramvalue1\", ...}\n");
+    }
 }
 
 static const struct option_def *find_opt(const struct option_def *opts,

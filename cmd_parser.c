@@ -392,12 +392,12 @@ void command_dispatch(const struct command_def *cmds, struct command_ctx *ctx,
     ctx->success = true;
     cmd_def->cb(ctx, params, num_params);
 
+done:
     if (ctx->jout) {
         json_out_field_bool(ctx->jout, "success", ctx->success);
         json_out_object_end(ctx->jout);
     }
 
-done:
     for (size_t n = 0; args && args[n]; n++)
         free(args[n]);
     free(args);

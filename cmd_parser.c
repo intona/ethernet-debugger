@@ -15,21 +15,70 @@ static void json_log(void *opaque, size_t loc, const char *msg)
     logline(lfn, "json: %s\n", msg);
 }
 
-static char **split_spaces(const char *s)
+static char map_escape(char r)
+{
+    switch (r) {
+    case '\\': return '\\';
+    case '\"': return '\"';
+    case '\'': return '\'';
+    case ' ':  return ' ';
+    case '/':  return '/';
+    case 'b':  return '\b';
+    case 'f':  return '\f';
+    case 'n':  return '\n';
+    case 'r':  return '\r';
+    case 't':  return '\t';
+    }
+    return 0;
+}
+
+// Split on spaces, but also interpret quotes (") and escapes (\...).
+// Somewhat reminiscent of shell.
+static char **split_spaces_with_quotes(const char *s)
 {
     static const char spaces[] = " \t\n\r";
 
     char **res = NULL;
     size_t res_n = 0;
+    char *tmp = malloc(strlen(s) + 1); // worst case work buffer
+    if (!tmp)
+        goto fail;
 
     do {
         // Leading space
         s += strspn(s, spaces);
-        const char *start = s;
-        s += strcspn(s, spaces);
-        if (s == start && !s[0] && res_n)
+        const char *end = s + strcspn(s, spaces);
+        if (end == s && !end[0] && res_n)
             break; // trailing space
-        char *word = strndup(start, s - start);
+
+        size_t len = 0;
+        char quote = 0;
+
+        while (s[0]) {
+            if (s[0] == quote) {
+                quote = 0;
+                s++;
+                continue;
+            } else if (!quote && (s[0] == '\"' || s[0] == '\'')) {
+                quote = s[0];
+                s++;
+                continue;
+            } else if (s[0] == '\\') {
+                char esc = map_escape(s[1]);
+                if (esc) {
+                    tmp[len++] = esc;
+                    s += 2;
+                    continue;
+                }
+            } else if (strchr(spaces, s[0]) && !quote) {
+                break;
+            }
+            tmp[len++] = *s++;
+        }
+
+        // Note: unterminated quotes are left as is.
+
+        char *word = strndup(tmp, len);
         if (!word)
             goto fail;
         if (!EXTEND_ARRAY(res, res_n, 1)) {
@@ -44,12 +93,14 @@ static char **split_spaces(const char *s)
         goto fail;
     res[res_n++] = NULL;
 
+    free(tmp);
     return res;
 
 fail:
     for (size_t n = 0; n < res_n; n++)
         free(res[n]);
     free(res);
+    free(tmp);
     return NULL;
 }
 
@@ -157,13 +208,22 @@ static bool parse_value(struct logfn log, const char *name,
     return true;
 }
 
+static int find_cmd_param(const struct command_def *cmd, const char *name)
+{
+    for (size_t p = 0; cmd->params[p].type; p++) {
+        assert(p < COMMAND_MAX_PARAMS);
+        if (strcmp(cmd->params[p].name, name) == 0)
+            return p;
+    }
+    return -1;
+}
+
 void command_dispatch(const struct command_def *cmds, struct command_ctx *ctx,
                       const char *cmd)
 {
     char mem[8192];
     struct json_tok *jcmd = NULL;
     char **args = NULL;
-    size_t num_args = 0;
     const char *cmdname = NULL;
 
     ctx->seq_id = -1;
@@ -177,20 +237,15 @@ void command_dispatch(const struct command_def *cmds, struct command_ctx *ctx,
         };
         struct json_tok *obj = json_parse(cmd, mem, sizeof(mem), &jopts);
         if (!obj || obj->type != JSON_TYPE_OBJECT)
-            return;
+            goto done;
 
         cmdname = json_get_string(obj, "command", "");
         ctx->seq_id = json_get_double(obj, "id", -1);
 
         jcmd = obj;
     } else {
-        args = split_spaces(cmd);
-
-        for (size_t n = 0; args && args[n]; n++)
-            num_args++;
-        if (num_args > 0)
-            cmdname = args[0];
-
+        args = split_spaces_with_quotes(cmd);
+        cmdname = args ? args[0] : NULL;
         ctx->jout = NULL;
     }
 
@@ -214,38 +269,119 @@ void command_dispatch(const struct command_def *cmds, struct command_ctx *ctx,
         goto done;
     }
 
-    struct command_param params[COMMAND_MAX_PARAMS];
-    size_t num_params = 0;
-    size_t consumed_args = 1; // first is command name
+    struct command_param params[COMMAND_MAX_PARAMS] = {{0}};
+    struct json_tok jtok_tmp[COMMAND_MAX_PARAMS];
 
+    if (jcmd) {
+        for (size_t p = 0; cmd_def->params[p].type; p++) {
+            assert(p < COMMAND_MAX_PARAMS);
+            const struct command_param_def *def = &cmd_def->params[p];
+            struct json_tok *el = json_get(jcmd, def->name);
+            char *param_name =
+                stack_sprintf(80, "parameter %zu/%s (%s)", p, def->name, def->desc);
+
+            if (!parse_value(ctx->log, param_name, def, el, &params[p]))
+                goto done;
+        }
+    } else {
+        size_t cur_arg = 1; // first is command name
+        size_t cur_pos = 0; // current positional parameter, index into params[]
+        bool positional_only = false;
+
+        while (args[cur_arg]) {
+            char *arg = args[cur_arg];
+            char *val = NULL;
+            int p = -1;
+            const struct command_param_def *def = NULL;
+
+            if (!positional_only && strncmp(arg, "--", 2) == 0) {
+                arg += 2;
+                cur_arg++;
+
+                if (!arg[0]) {
+                    positional_only = true;
+                    continue;
+                }
+
+                char optname[80];
+                val = strchr(arg, '=');
+                if (val) {
+                    snprintf(optname, sizeof(optname), "%.*s", (int)(val - arg), arg);
+                    val += 1;
+                } else {
+                    snprintf(optname, sizeof(optname), "%s", arg);
+                }
+
+                p = find_cmd_param(cmd_def, optname);
+                if (p < 0) {
+                    LOG(ctx, "error: parameter --%s not found\n", optname);
+                    goto done;
+                }
+                def = &cmd_def->params[p];
+
+                // "Flag" parameters do not need an argument, but can have one.
+                if (!val && def->type == COMMAND_PARAM_TYPE_BOOL) {
+                    if (!args[cur_arg] || strncmp(args[cur_arg], "--", 2) == 0)
+                        val = "true";
+                }
+
+                if (!val && args[cur_arg]) {
+                    val = args[cur_arg];
+                    cur_arg++;
+                }
+            } else {
+                p = cur_pos;
+                def = p < COMMAND_MAX_PARAMS ? &cmd_def->params[p] : NULL;
+                if (!def || !def->type) {
+                    LOG(ctx, "error: unused arguments starting with '%s'.\n", arg);
+                    goto done;
+                }
+                val = arg;
+                cur_pos++;
+                cur_arg++;
+            }
+
+            jtok_tmp[p] = (struct json_tok){
+                .type = JSON_TYPE_STRING,
+                .u.str = val,
+            };
+
+            char *param_name =
+                stack_sprintf(80, "parameter %u/%s (%s)", p, def->name, def->desc);
+
+            if (!val) {
+                LOG(ctx, "error: %s expects an argument\n", param_name);
+                goto done;
+            }
+
+            if (params[p].def) {
+                LOG(ctx, "error: %s provided more than once\n", param_name);
+                goto done;
+            }
+
+            if (!parse_value(ctx->log, param_name, def, &jtok_tmp[p], &params[p]))
+                goto done;
+        }
+    }
+
+    size_t num_params = 0;
     for (size_t p = 0; cmd_def->params[p].type; p++) {
         assert(p < COMMAND_MAX_PARAMS);
         const struct command_param_def *def = &cmd_def->params[p];
 
-        char *param_name =
-            stack_sprintf(80, "parameter %zu/%s (%s)", p, def->name, def->desc);
+        if (!def)
+            break;
 
-        struct json_tok tmp;
-        struct json_tok *el = NULL;
+        if (!params[p].def) {
+            char *param_name =
+                stack_sprintf(80, "parameter %zu/%s (%s)", p, def->name, def->desc);
 
-        if (jcmd) {
-            el = json_get(jcmd, def->name);
-        } else {
-            if (consumed_args < num_args) {
-                tmp.type = JSON_TYPE_STRING;
-                tmp.u.str = args[consumed_args++];
-                el = &tmp;
-            }
+            if (!parse_value(ctx->log, param_name, def, NULL, &params[p]))
+                goto done;
         }
 
-        if (!parse_value(ctx->log, param_name, def, el, &params[num_params++]))
-            goto done;
-    }
-
-    if (!jcmd && consumed_args < num_args) {
-        LOG(ctx, "error: %zu unused arguments (starting with '%s').\n",
-            num_args - consumed_args, args[consumed_args]);
-        goto done;
+        assert(params[p].def == def);
+        num_params++;
     }
 
     if (ctx->jout) {
@@ -299,8 +435,12 @@ void command_list_help(const struct command_def *cmds, struct logfn lfn)
         }
     }
 
-    logline(lfn, "Syntax: command param1-value param2-value...\n");
-    logline(lfn, "Or: {\"command\":\"cmd-name\",\"param1-name\":\"param1-value\", ...}\n");
+    logline(lfn, "Syntax: command param1 param2...\n");
+    logline(lfn, "Named parameters: command --paramname1=paramvalue1...\n");
+    logline(lfn, "Values can be quoted with \"...\" (or \'), some \\ escapes work.\n");
+    logline(lfn, "You can add a ' -- ' after the command name to avoid\n");
+    logline(lfn, "interpreting '--something...' as option name.\n");
+    logline(lfn, "Or: {\"command\":\"cmd-name\",\"paramname1\":\"paramvalue1\", ...}\n");
 }
 
 static const struct option_def *find_opt(const struct option_def *opts,
@@ -416,7 +556,7 @@ bool options_parse(struct logfn log, const struct option_def *opts,
         }
 
         if (!val) {
-            logline(log, "error: argument expected\n");
+            logline(log, "error: option %s requires an argument\n", optname);
             goto error;
         }
 

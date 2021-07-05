@@ -190,7 +190,7 @@ void run_init_and_test(struct global *global, char *device, char *serial)
     size_t fw_size = 0;
 
     if (!read_file("firmware.dat", &fw, &fw_size) && errno != ENOENT) {
-        logline(log, "firmware.dat not found.\n");
+        logline(log, "firmware.dat could not be read.\n");
         _Exit(21);
     }
 
@@ -277,29 +277,25 @@ void run_init_and_test(struct global *global, char *device, char *serial)
 
     logline(log, "Checking mdio...\n");
 
-    // Test mdio: test register 22, because it can take arbitrary 8 bit data
+    // Test mdio: test register 17_24, because it can take arbitrary 16 bit data
     device_cfg_lock(dev);
-    if (device_mdio_write(dev, DEV_PORT_ALL, 22, 15) < 0)
+    if (device_mdio_write(dev, DEV_PORT_ALL, 22, 17) < 0)
         _Exit(2);
-    if (device_mdio_write(dev, DEV_PORT_A, 22, 8) < 0)
+    if (device_mdio_write(dev, DEV_PORT_A, 24, 0xABCD) < 0)
+        _Exit(2);
+    if (device_mdio_write(dev, DEV_PORT_B, 24, 0x1234) < 0)
         _Exit(2);
     int regs[2];
-    if (device_mdio_read_both(dev, 22, regs) < 0)
+    if (device_mdio_read_both(dev, 24, regs) < 0)
         _Exit(3);
-    if (regs[0] != 8 || regs[1] != 15)
+    if (regs[0] != 0xABCD || regs[1] != 0x1234)
         _Exit(4);
-    if (device_mdio_write(dev, DEV_PORT_B, 22, 4) < 0)
+    if (device_mdio_write(dev, DEV_PORT_ALL, 24, 0xF0BA) < 0)
         _Exit(2);
-    if (device_mdio_read_both(dev, 22, regs) < 0)
+    if (device_mdio_read_both(dev, 24, regs) < 0)
         _Exit(3);
-    if (regs[0] != 8 || regs[1] != 4)
+    if (regs[0] != 0xF0BA || regs[1] != 0xF0BA)
         _Exit(4);
-    if (device_mdio_write(dev, DEV_PORT_ALL, 22, 0) < 0)
-        _Exit(5);
-    if (device_mdio_read_both(dev, 22, regs) < 0)
-        _Exit(6);
-    if (regs[0] != 0 || regs[1] != 0)
-        _Exit(7);
     device_cfg_unlock(dev);
 
     logline(log, "Configure disrupt...\n");

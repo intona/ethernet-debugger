@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <errno.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
@@ -186,6 +187,18 @@ static bool parse_value(struct logfn log, const char *name,
         } else {
             logline(log, "error: %s requires an integer.\n", name);
             return false;
+        }
+        if (def->irange.min || def->irange.max) {
+            if (data->p_int < def->irange.min) {
+                logline(log, "error: %s out of range: %"PRId64" < %"PRId64".\n",
+                        name, data->p_int, def->irange.min);
+                return false;
+            }
+            if (data->p_int > def->irange.max) {
+                logline(log, "error: %s out of range: %"PRId64" > %"PRId64".\n",
+                        name, data->p_int, def->irange.max);
+                return false;
+            }
         }
         break;
     }
@@ -506,6 +519,7 @@ static void set_cmd_def_from_opt_def(struct command_param_def *dst,
         .type = src->type,
         .flags = src->flags,
         .aliases = src->aliases,
+        .irange = src->irange,
     };
 }
 

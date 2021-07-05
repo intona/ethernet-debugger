@@ -43,6 +43,11 @@ struct command_alias_val {
     const char *desc;
 };
 
+// If {0, 0}, the range is treated the same as {INT64_MIN, INT64_MAX}.
+struct command_i64_range {
+    int64_t min, max;
+};
+
 struct command_param_def {
     const char *name;
     enum command_param_type type;
@@ -52,6 +57,7 @@ struct command_param_def {
     // Aliases: replace user input matching .user_val with .param_val.
     // Use PARAM_ALIASES to set this (it also terminates the array correctly).
     const struct command_alias_val *aliases;
+    struct command_i64_range irange; // for COMMAND_PARAM_TYPE_INT64[_S]
 };
 
 #define PARAM_ALIASES(...) \
@@ -103,6 +109,7 @@ struct option_def {
     // Aliases: replace user input matching .user_val with .param_val.
     // Use PARAM_ALIASES to set this (it also terminates the array correctly).
     const struct command_alias_val *aliases;
+    struct command_i64_range irange; // for COMMAND_PARAM_TYPE_INT64[_S]
 };
 
 // Parse argv and write the result to a struct pointed to by target, using the

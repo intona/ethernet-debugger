@@ -458,6 +458,10 @@ static void handle_device_opened(struct nose_ctx *ctx, struct device *dev)
     assert(dev);
     assert(!ctx->usb_dev);
 
+    // Reset change detection.
+    for (int port = 1; port <= 2; port++)
+        ctx->prev_phy_st[port - 1].speed = -1;
+
     ctx->usb_dev = dev;
     event_set_notifier(ctx->phy_update_event, dev->phy_update);
     event_set_notifier(ctx->usb_discon_event, dev->on_disconnect);

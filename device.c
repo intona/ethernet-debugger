@@ -494,7 +494,7 @@ struct device *device_open(struct global *global, const char *devname)
         for (size_t n = 0; list && list[n]; n++) {
             libusb_device *dev = list[n];
 
-            // A silly way to ruse the code that checks for PID/VID.
+            // A silly way to reuse the code that checks for PID/VID.
             if (!usb_get_device_name(dev, &(char){0}, 1))
                 continue;
 

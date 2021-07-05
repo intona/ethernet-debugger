@@ -518,7 +518,14 @@ static void cmd_dev_list(struct command_ctx *cctx, struct command_param *params,
             json_out_array_entry_start(cctx->jout);
             json_out_string(cctx->jout, devname);
         } else {
-            LOG(cctx, " - '%s'\n", devname);
+            // Note: no serial number return per API yet. Maybe if someone
+            // actually requests it as a feature.
+            char serial[USB_DEVICE_SERIAL_LEN];
+            if (usb_get_device_serial(list[n], serial, sizeof(serial))) {
+                LOG(cctx, " - '%s' (%s)\n", serial, devname);
+            } else {
+                LOG(cctx, " - '%s'\n", devname);
+            }
         }
 
         num_devs++;
@@ -921,12 +928,9 @@ static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
         LOG(cctx, "Firmware version: %d.%02d\n", desc.bcdDevice >> 8,
             desc.bcdDevice & 0xFF);
 
-        if (desc.iSerialNumber) {
-            unsigned char text[256];
-            if (libusb_get_string_descriptor_ascii(dev->dev, desc.iSerialNumber,
-                                                   text, sizeof(text)) > 0)
-                LOG(cctx, "Serial number: %s\n", text);
-        }
+        char serial[USB_DEVICE_SERIAL_LEN];
+        if (usb_get_device_serial(libusb_get_device(dev->dev), serial, sizeof(serial)))
+            LOG(cctx, "Serial number: %s\n", serial);
     }
 
     uint32_t *res = NULL;
@@ -1504,13 +1508,21 @@ static bool handle_extcap(struct nose_ctx *ctx)
         libusb_get_device_list(usb_thread_libusb_context(ctx->global->usb_thr),
                                &list);
         for (size_t n = 0; list && list[n]; n++) {
-            char devname[USB_DEVICE_NAME_LEN];
+            char name[USB_DEVICE_NAME_LEN];
+            char serial[USB_DEVICE_SERIAL_LEN];
+            char *usertxt = NULL;
 
-            if (!usb_get_device_name(list[n], devname, sizeof(devname)))
+            if (!usb_get_device_name(list[n], name, sizeof(name)))
                 continue;
 
+            if (usb_get_device_serial(list[n], serial, sizeof(serial))) {
+                usertxt = serial;
+            } else {
+                usertxt = name;
+            }
+
             printf("interface {value=%s}{display=Ethernet Debugger USB (%s)}\n",
-                   devname, devname);
+                   name, usertxt);
         }
 
         libusb_free_device_list(list, 1);

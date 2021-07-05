@@ -521,7 +521,9 @@ struct device *device_open(struct global *global, const char *devname)
 
     char name[USB_DEVICE_NAME_LEN];
     usb_get_device_name(libusb_get_device(handle), name, sizeof(name));
-    LOG(global, "Device %s opened.\n", name);
+    char serial[USB_DEVICE_SERIAL_LEN];
+    usb_get_device_serial(libusb_get_device(handle), serial, sizeof(serial));
+    LOG(global, "Device %s / %s opened.\n", serial, name);
 
     return device_open_with_handle(global, handle);
 }

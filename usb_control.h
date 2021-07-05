@@ -16,6 +16,9 @@
 // Maximum length of a device name.
 #define USB_DEVICE_NAME_LEN 20
 
+// Maximum length of a serial string.
+#define USB_DEVICE_SERIAL_LEN 256
+
 // Return the device "name" in buf (which has buf_size bytes space). The name
 // is made up and specific to this function and usb_find_device(). It's supposed
 // to be unique, but isn't stable. It must reference the physical port (for when
@@ -25,6 +28,10 @@
 // buf_size is recommended to be USB_DEVICE_NAME_LEN, but can have any size.
 // On failure (false returned), the device name is set to "(unknown)".
 bool usb_get_device_name(libusb_device *dev, char *buf, size_t buf_size);
+
+// Similar to usb_get_device_name(), but return the device descriptor serial
+// number string. buf_size should be USB_DEVICE_SERIAL_LEN.
+bool usb_get_device_serial(libusb_device *dev, char *buf, size_t buf_size);
 
 // Return the device that returns the same name with usb_get_device_name().
 // name==NULL uses the first device with recognized PID/VID.

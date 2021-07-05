@@ -10,7 +10,7 @@
 #include "utils.h"
 
 static bool get_device_name(libusb_device *dev, char *buf, size_t buf_size,
-                            bool any)
+                            bool any, bool serial)
 {
     if (buf_size)
         buf[0] = '\0';
@@ -23,10 +23,23 @@ static bool get_device_name(libusb_device *dev, char *buf, size_t buf_size,
                   desc.idProduct == FW_USB_MAIN_PID))
         goto fail;
 
-    snprintf(buf, buf_size, "%d:%d:%d",
-             libusb_get_bus_number(dev),
-             libusb_get_port_number(dev),
-             libusb_get_device_address(dev));
+    if (serial) {
+        if (!desc.iSerialNumber)
+            goto fail;
+        libusb_device_handle *handle = NULL;
+        if (libusb_open(dev, &handle))
+            goto fail;
+        int r = libusb_get_string_descriptor_ascii(handle, desc.iSerialNumber,
+                                                   (unsigned char *)buf, buf_size);
+        libusb_close(handle);
+        if (r <= 0 || r >= buf_size)
+            goto fail;
+    } else {
+        snprintf(buf, buf_size, "%d:%d:%d",
+                 libusb_get_bus_number(dev),
+                 libusb_get_port_number(dev),
+                 libusb_get_device_address(dev));
+    }
     return true;
 
 fail:
@@ -36,7 +49,12 @@ fail:
 
 bool usb_get_device_name(libusb_device *dev, char *buf, size_t buf_size)
 {
-    return get_device_name(dev, buf, buf_size, false);
+    return get_device_name(dev, buf, buf_size, false, false);
+}
+
+bool usb_get_device_serial(libusb_device *dev, char *buf, size_t buf_size)
+{
+    return get_device_name(dev, buf, buf_size, false, true);
 }
 
 static libusb_device *find_device(libusb_context *ctx, const char *name, bool any)
@@ -45,15 +63,19 @@ static libusb_device *find_device(libusb_context *ctx, const char *name, bool an
     libusb_device **list = NULL;
     libusb_get_device_list(ctx, &list);
 
-    for (size_t n = 0; list && list[n]; n++) {
-        char devname[USB_DEVICE_NAME_LEN];
+    // As a minor optimization, query the serial number in a second pass, to
+    // avoid querying the serial number from all the devices if it's avoidable.
+    for (size_t serial = 0; serial < 2; serial++) {
+        for (size_t n = 0; list && list[n]; n++) {
+            char devname[USB_DEVICE_NAME_LEN];
 
-        if (!get_device_name(list[n], devname, sizeof(devname), any))
-            continue;
+            if (!get_device_name(list[n], devname, sizeof(devname), any, serial))
+                continue;
 
-        if (!name || strcmp(name, devname) == 0) {
-            res = libusb_ref_device(list[n]);
-            break;
+            if (!name || strcmp(name, devname) == 0) {
+                res = libusb_ref_device(list[n]);
+                break;
+            }
         }
     }
 

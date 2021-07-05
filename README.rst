@@ -1,7 +1,9 @@
 About
 =====
 
-This is the host program / userspace driver for the Intona Ethernet Debugger.
+This is the host program / userspace driver for the Intona Ethernet Debugger. It
+provides a "userspace driver" to Wireshark for packet capturing, and can access
+special hardware features.
 
 Copyright
 =========
@@ -73,7 +75,7 @@ Hardware access permissions
 ---------------------------
 
 The device is accessed via libusb. No driver installation is necessary. However,
-you may need to manually install an udev rule to allow access to the device::
+you may need to manually install a udev rule to allow access to the device::
 
     sudo cp udev.rules /etc/udev/rules.d/50-intona-ethernet-debugger.rules
     sudo udevadm trigger

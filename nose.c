@@ -926,6 +926,28 @@ static void cmd_disrupt(struct command_ctx *cctx, struct command_param *params,
     }
 }
 
+static void cmd_block_ports(struct command_ctx *cctx, struct command_param *params,
+                            size_t num_params)
+{
+    struct device *dev = require_dev(cctx);
+    if (!dev)
+        return;
+
+    int block = params[0].p_int;
+    int unblock = 3u & ~(block & 3u);
+
+    uint32_t cmd = ((unblock & 3u) << (24 + 6)) | (1 << (24 + 5)) | (2 << 24);
+    int r1 = device_config_raw(dev, &cmd, 1, NULL, NULL);
+
+    cmd = ((unblock & 3u) << (24 + 6)) | (1 << (24 + 5)) | (2 << 24) | (0xFF << 16);
+    int r2 = device_config_raw(dev, &cmd, 1, NULL, NULL);
+
+    if (r1 < 0 || r2 < 0) {
+        LOG(cctx, "error: failed to send command\n");
+        cctx->success = false;
+    }
+}
+
 static void cmd_inject(struct command_ctx *cctx, struct command_param *params,
                        size_t num_params)
 {
@@ -1329,6 +1351,8 @@ static const struct command_def command_list[] = {
     }},
     {"speed", "Set Ethernet speed on both ports", cmd_set_speed, {
         {"speed", COMMAND_PARAM_TYPE_STR, "one of 10, 100, 1000, same, manual"}, }},
+    {"block_ports", "Port blocker", cmd_block_ports, {
+        PHY_SELECT }},
     {"disrupt", "Packet disruptor", cmd_disrupt, {
         PHY_SELECT,
         {"drop", COMMAND_PARAM_TYPE_BOOL, "false", "drop only"},

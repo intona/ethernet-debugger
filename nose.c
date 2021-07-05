@@ -1450,10 +1450,10 @@ static int handle_firmware_update(struct nose_ctx *ctx)
         }
         LOG(ctx, " -------------------------------------------------------\n");
         LOG(ctx, "  a        Update all devices with outdated firmware\n");
-        LOG(ctx, "  b        Update all devices (dangerous)\n");
+        LOG(ctx, "  b        Force update all devices (dangerous)\n");
         LOG(ctx, "  c        Do nothing and exit\n");
         LOG(ctx, " -------------------------------------------------------\n");
-        LOG(ctx, "\nEnter your choice: ");
+        LOG(ctx, "\nEnter your choice (a number, or one of a, b, c): ");
         char input[80];
         if (!fgets(input, sizeof(input), stdin))
             input[0] = '\0';

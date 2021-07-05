@@ -299,7 +299,7 @@ bool usb_write_flash(libusb_device_handle *dev, struct logfn lfn,
     if (sector_start == 0) {
         // Painful 4 KB sector nonsense
         for (int n = 0; n < 8; n++) {
-            logline(lfn, "Erasing sub-sector %d/8...\n", n);
+            logline(lfn, "Erasing sub-sector %d/8...\r", n);
 
             if (!flash_prepare_write(dev, lfn))
                 return false;
@@ -320,7 +320,7 @@ bool usb_write_flash(libusb_device_handle *dev, struct logfn lfn,
     }
 
     for (int n = sector_start; n < sector_end; n++) {
-        logline(lfn, "Erasing sector %d/%d...\n", n - sector_start, sector_count);
+        logline(lfn, "Erasing sector %d/%d...\r", n - sector_start, sector_count);
 
         if (!flash_prepare_write(dev, lfn))
             return false;
@@ -342,7 +342,7 @@ bool usb_write_flash(libusb_device_handle *dev, struct logfn lfn,
 
     int page_count = (size + page_size - 1) / page_size;
     for (int n = 0; n < page_count; n++) {
-        logline(lfn, "Programming page %d/%d...\n", n, page_count);
+        logline(lfn, "Programming page %d/%d...\r", n, page_count);
 
         for (int repeat = 0; ; repeat++) {
             if (!flash_prepare_write(dev, lfn))
@@ -394,7 +394,7 @@ bool usb_write_flash(libusb_device_handle *dev, struct logfn lfn,
 
     // Verify...
     for (int n = 0; n < page_count; n++) {
-        logline(lfn, "Reading page %d/%d...\n", n, page_count);
+        logline(lfn, "Reading page %d/%d...\r", n, page_count);
 
         if (!flash_prepare_read(dev, lfn))
             return false;

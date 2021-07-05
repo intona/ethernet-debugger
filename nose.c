@@ -1169,7 +1169,7 @@ static void on_ipc_client_event(void *ud, struct pipe *p, unsigned events)
 
     if (events & PIPE_EVENT_NEW_DATA) {
         while (1) {
-            char line[100];
+            char line[4096];
             void *buf;
             size_t size;
             pipe_peek(p, &buf, &size);

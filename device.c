@@ -215,7 +215,7 @@ static void *irq_thread(void *p)
 
         int regs[2];
 
-        if (dev->fw_version < 6) {
+        if (dev->fw_version < 0x106) {
             // Read register 19 (interrupt status register), which resets it.
             // Important, since IRQs are level triggered.
             device_mdio_read_both(dev, MDIO_PAGE_REG(0, 19), regs);
@@ -395,7 +395,7 @@ struct device *device_open_with_handle(struct global *global,
                     "supports only version 1. Outdated software?\n", major_dev_ver);
         goto fail;
     }
-    dev->fw_version = desc.bcdDevice & 0xFF;
+    dev->fw_version = desc.bcdDevice;
 
     dev->cfg_in = (struct usb_ep){
         .dev = udev,
@@ -426,7 +426,7 @@ struct device *device_open_with_handle(struct global *global,
     if (!usb_ep_in_add(global->usb_thr, &dev->debug_in, 6, 16 * 1024))
         goto fail;
 
-    if (dev->fw_version < 6) {
+    if (dev->fw_version < 0x106) {
         bool mdio_init_ok = true;
 
         // Configure the interrupt pin

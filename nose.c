@@ -782,7 +782,7 @@ static void cmd_set_speed(struct command_ctx *cctx, struct command_param *params
         autoneg = 1;
         fw_speed_mode = 4;
     } else if (strcmp(mode, "same") == 0) {
-        if (dev->fw_version < 6) {
+        if (dev->fw_version < 0x106) {
             LOG(cctx, "this mode is not supported with this firmware version"
                       " (a free update is available from Intona)\n");
             cctx->success = false;
@@ -795,7 +795,7 @@ static void cmd_set_speed(struct command_ctx *cctx, struct command_param *params
     }
 
     int r;
-    if (dev->fw_version < 6) {
+    if (dev->fw_version < 0x106) {
         uint16_t v = (1 << 15) |                // reset
                      ((!!(speed & 1)) << 13) |  // speed select
                      (!!((speed & 2)) << 6) |
@@ -984,7 +984,7 @@ static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
     free(res);
 
     LOG(cctx, "Persistent settings stored on the device:\n");
-    if (dev->fw_version < 6) {
+    if (dev->fw_version < 0x106) {
         LOG(cctx, " (none)\n");
     } else {
         int mode = -1;
@@ -1019,7 +1019,7 @@ static void cmd_dev_reset_settings(struct command_ctx *cctx,
     if (!dev)
         return;
 
-    if (dev->fw_version < 6) {
+    if (dev->fw_version < 0x106) {
         LOG(cctx, "Device with old firmware; no persistent settings.\n");
         return;
     }

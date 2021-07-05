@@ -80,10 +80,7 @@ bool usb_program_cyboot(libusb_device_handle *dev, struct logfn lfn,
 bool usb_reboot(libusb_device_handle *dev, struct logfn lfn);
 
 // Validate the firmware image (no USB access).
-bool fw_verify(struct logfn lfn, void *data, size_t size);
-
-// Write firmware to the device. Do not reboot. image: 0=fallback, 1=normal.
-bool usb_fw_update(libusb_device_handle *dev, struct logfn lfn,
-                   const char *fname, int image);
+// Returns 0 on error, or new bcdDevice version the firmware will report.
+int fw_verify(struct logfn lfn, void *data, size_t size);
 
 #endif

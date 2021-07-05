@@ -20,6 +20,7 @@
 #include "event_loop.h"
 #include "fifo.h"
 #include "filters.h"
+#include "fw_header.h"
 #include "global.h"
 #include "grabber.h"
 #include "json_out.h"
@@ -50,6 +51,8 @@ struct options {
     bool run_wireshark;
     char *device;
     char *fw_update_file;
+    bool fw_update_all;
+    bool fw_update_force;
     char *capture_to;
     char *ipc_connect;
     char *ipc_server;
@@ -89,6 +92,12 @@ const struct option_def option_list[] = {
     {"firmware-update", offsetof(struct options, fw_update_file),
         COMMAND_PARAM_TYPE_STR,
         "Perform a firmware update using this file."},
+    {"firmware-update-all", offsetof(struct options, fw_update_all),
+        COMMAND_PARAM_TYPE_BOOL,
+        "Update all found devices, instead of asking interactively."},
+    {"firmware-update-force", offsetof(struct options, fw_update_force),
+        COMMAND_PARAM_TYPE_BOOL,
+        "Update a device even if it has a recent or newer firmware version."},
     // Also used by Wireshark extcap.
     {"fifo", offsetof(struct options, capture_to),
         COMMAND_PARAM_TYPE_STR,
@@ -1309,6 +1318,175 @@ static const struct command_def command_list[] = {
     {0}
 };
 
+static int handle_firmware_update(struct nose_ctx *ctx)
+{
+    // (duplicates some of the --device logic)
+    bool specific_device = strcmp(ctx->opts.device, "none") != 0 &&
+                           ctx->opts.device[0];
+    bool all = ctx->opts.fw_update_all;
+    bool interactive = !all && !specific_device;
+    bool force = ctx->opts.fw_update_force;
+
+    if (specific_device && all) {
+        LOG(ctx, "Firmware update requested, but both --device and conflicting"
+                 " --firmware-update-all provided; exiting.\n");
+        return 1;
+    }
+
+    void *data;
+    size_t size;
+    if (!read_file(ctx->opts.fw_update_file, &data, &size)) {
+        LOG(ctx, "Error: could not read file '%s'.\n", ctx->opts.fw_update_file);
+        return 2;
+    }
+    int fw_version = fw_verify(ctx->log, data, size);
+    if (!fw_version) {
+        free(data);
+        return 2;
+    }
+
+    LOG(ctx, "Firmware file: version %d.%02d\n", fw_version >> 8, fw_version & 0xFF);
+
+    libusb_device **list = NULL;
+    libusb_get_device_list(usb_thread_libusb_context(ctx->global->usb_thr), &list);
+
+    long dev_choice = -1;
+
+    if (interactive) {
+        LOG(ctx, "Select firmware update action:\n\n");
+        LOG(ctx, "  Choice   Address   Serial           Firmware version\n");
+        LOG(ctx, " -------------------------------------------------------\n");
+        size_t last_valid = 0;
+        for (size_t n = 0; list && list[n]; n++) {
+            char devname[USB_DEVICE_NAME_LEN];
+            char devserial[USB_DEVICE_SERIAL_LEN];
+            char ver[20] = "?";
+
+            if (!usb_get_device_name(list[n], devname, sizeof(devname)))
+                continue;
+
+            last_valid = n + 1;
+
+            if (!usb_get_device_serial(list[n], devserial, sizeof(devserial)))
+                snprintf(devserial, sizeof(devserial), "?");
+
+            struct libusb_device_descriptor desc;
+            if (!libusb_get_device_descriptor(list[n], &desc)) {
+                snprintf(ver, sizeof(ver), "%d.%02d", desc.bcdDevice >> 8,
+                         desc.bcdDevice & 0xFF);
+            }
+
+            LOG(ctx, "  %-8zd %-9s %-16s %-30s\n", n, devname, devserial, ver);
+        }
+        LOG(ctx, " -------------------------------------------------------\n");
+        LOG(ctx, "  a        Update all devices with outdated firmware\n");
+        LOG(ctx, "  b        Update all devices (dangerous)\n");
+        LOG(ctx, "  c        Do nothing and exit\n");
+        LOG(ctx, " -------------------------------------------------------\n");
+        LOG(ctx, "\nEnter your choice: ");
+        char input[80];
+        if (!fgets(input, sizeof(input), stdin))
+            input[0] = '\0';
+        char *end;
+        long num = strtol(input, &end, 10);
+        if (end != input && end[0] == '\n' && num >= 0 && num < last_valid) {
+            dev_choice = num;
+            LOG(ctx, "Updating device %ld...\n", dev_choice);
+        } else if (strcasecmp(input, "a\n") == 0) {
+            all = true;
+            force = false;
+        } else if (strcasecmp(input, "b\n") == 0) {
+            all = true;
+            force = true;
+        } else {
+            bool err = strcasecmp(input, "c\n") != 0;
+            if (err)
+                LOG(ctx, "Invalid choice, exiting.\n");
+            libusb_free_device_list(list, 1);
+            free(data);
+            return err ? 1 : 0;
+        }
+    }
+
+    size_t num_devs = 0;
+    size_t num_failed = 0;
+    size_t num_updated = 0;
+
+    bool last = false;
+    for (size_t n = 0; !last; n++) {
+        struct device *dev = NULL;
+
+        // Don't blame me, blame C. Just trying to unify it into one code block,
+        // while not having painless closures available.
+        last = !(list && list[n]);
+        if (last) {
+            if (!specific_device)
+                break;
+            dev = device_open(ctx->global, ctx->opts.device);
+        } else {
+            char devname[USB_DEVICE_NAME_LEN];
+
+            if (specific_device)
+                continue;
+
+            if (!all && n != dev_choice)
+                continue;
+
+            if (!usb_get_device_name(list[n], devname, sizeof(devname)))
+                continue;
+
+            dev = device_open(ctx->global, devname);
+        }
+
+        if (dev) {
+            if (!force && dev->fw_version >= fw_version) {
+                LOG(ctx, "Device has recent or newer firmware version, skipping.\n");
+            } else {
+                uint32_t addr = FW_BASE_ADDRESS_1 + FW_HEADER_OFFSET;
+                if (usb_write_flash(dev->dev, ctx->log, addr, data, size)) {
+                    LOG(ctx, "Firmware apparently successfully written.\n");
+                    usb_reboot(dev->dev, ctx->log);
+                    num_updated++;
+                } else {
+                    LOG(ctx, "Firmware could not be written!\n");
+                    num_failed++;
+                }
+            }
+            device_close(dev);
+        } else {
+            num_failed++;
+        }
+
+        num_devs++;
+    }
+
+    libusb_free_device_list(list, 1);
+    free(data);
+
+    if (!num_devs) {
+        LOG(ctx, "No devices found or invalid selection.\n");
+        return 1;
+    }
+
+    LOG(ctx, "%zu device(s) found.\n", num_devs);
+    size_t skipped = num_devs - (num_failed + num_updated);
+    if (skipped)
+        LOG(ctx, "%zu device(s) skipped.\n", skipped);
+    if (num_updated)
+        LOG(ctx, "%zu device(s) successfully updated.\n", num_updated);
+
+
+    if (num_failed) {
+        LOG(ctx, "Warning: %zu device(s) failed to update!\n", num_failed);
+        LOG(ctx, "Please try again. If the update already started, but was "
+                 "interrupted or failed, then the device will hopefully boot "
+                 "from the factory image after a power-cycle, and you can retry "
+                 "the firmware update.\n");
+    }
+
+    return num_failed ? 3 : 0;
+}
+
 #if HAVE_POSIX
 
 // Returns a malloc'ed string with the full wireshark path; NULL if not found.
@@ -1684,6 +1862,12 @@ int main(int argc, char **argv)
         goto error_exit;
     }
 
+    if (ctx->opts.fw_update_file[0]) {
+        int r = handle_firmware_update(ctx);
+        flush_log(ctx);
+        return r;
+    }
+
     if (!handle_extcap(ctx))
         goto error_exit;
 
@@ -1699,23 +1883,6 @@ int main(int argc, char **argv)
                 LOG(ctx, "Exiting because device could not be opened.\n");
                 goto error_exit;
             }
-        }
-    }
-
-    if (ctx->opts.fw_update_file[0]) {
-        if (!ctx->usb_dev)
-            goto error_exit;
-        if (usb_fw_update(ctx->usb_dev->dev, ctx->log, ctx->opts.fw_update_file, 1))
-        {
-            LOG(ctx, "Firmware apparently successfully written.\n");
-            usb_reboot(ctx->usb_dev->dev, ctx->log);
-            return 0;
-        } else {
-            LOG(ctx, "Firmware could not be written! Please try again. If the "
-                "update already started, but was interrupted or failed, and the "
-                "device is power-cycled, it will hopefully boot from the "
-                "factory image.\n");
-            goto error_exit;
         }
     }
 

@@ -765,18 +765,18 @@ static bool check_offsets(uint32_t img_size, uint32_t offset, uint32_t size)
            offset >= sizeof(struct fw_header);
 }
 
-bool fw_verify(struct logfn lfn, void *data, size_t size)
+int fw_verify(struct logfn lfn, void *data, size_t size)
 {
     size_t max_size = FW_BASE_ADDRESS_1 - FW_BASE_ADDRESS_0 - FW_HEADER_OFFSET;
 
     if (size > max_size) {
         logline(lfn, "Invalid firmware image (file too large).\n");
-        return false;
+        return 0;
     }
 
     if (size < sizeof(struct fw_header)) {
         logline(lfn, "Invalid firmware image (file too small).\n");
-        return false;
+        return 0;
     }
 
     struct fw_header *h = (void *)data;
@@ -787,43 +787,26 @@ bool fw_verify(struct logfn lfn, void *data, size_t size)
         !check_offsets(h->size, h->fpga_offs, h->fpga_size))
     {
         logline(lfn, "Invalid firmware image (broken header).\n");
-        return false;
+        return 0;
     }
 
     if (h->fw_crc != crc32(0, (char *)data + h->fw_offs, h->fw_size) ||
         h->fpga_crc != crc32(0, (char *)data + h->fpga_offs, h->fpga_size))
     {
         logline(lfn, "Invalid firmware image (corrupted file).\n");
-        return false;
+        return 0;
     }
 
     // I bet a beer that we never make use of this.
     if (h->vid != FW_USB_MAIN_VID || h->pid != FW_USB_MAIN_PID) {
         logline(lfn, "Firmware image is for an incompatible device.\n");
-        return false;
+        return 0;
     }
 
-    return true;
-}
+    if (h->version >= (1 << 16) - 256) {
+        logline(lfn, "Strange version field.\n");
+        return 0;
+    }
 
-bool usb_fw_update(libusb_device_handle *dev, struct logfn lfn,
-                   const char *fname, int image)
-{
-    if (image != 0 && image != 1)
-        return false; // ?
-    uint32_t addr = image ? FW_BASE_ADDRESS_1 : FW_BASE_ADDRESS_0;
-    addr += FW_HEADER_OFFSET;
-    void *data;
-    size_t size;
-    if (!read_file(fname, &data, &size)) {
-        logline(lfn, "Could not read file '%s'.\n", fname);
-        return false;
-    }
-    if (!fw_verify(lfn, data, size)) {
-        free(data);
-        return false;
-    }
-    bool ok = usb_write_flash(dev, lfn, addr, data, size);
-    free(data);
-    return ok;
+    return h->version + 256;
 }

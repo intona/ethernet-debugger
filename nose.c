@@ -1282,7 +1282,7 @@ static const struct command_def command_list[] = {
         {"value", COMMAND_PARAM_TYPE_INT64, NULL, "new register value"},
         {"page", COMMAND_PARAM_TYPE_INT64, "-1", "Register page (-1=NOP)"}, }},
     {"speed", "Set Ethernet speed on both ports", cmd_set_speed, {
-        {"speed", COMMAND_PARAM_TYPE_STR, "10, 100, 1000, or auto"}, }},
+        {"speed", COMMAND_PARAM_TYPE_STR, "one of 10, 100, 1000, same, manual"}, }},
     {"disrupt", "Packet disruptor", cmd_disrupt, {
         PHY_SELECT,
         {"drop", COMMAND_PARAM_TYPE_BOOL, "false", "drop only"},

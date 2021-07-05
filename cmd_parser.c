@@ -417,9 +417,13 @@ done:
     free(args);
 }
 
-static const char *get_type_help(enum command_param_type t)
+static const char *get_type_help(const struct command_param_def *def)
 {
-    switch (t) {
+    if ((def->flags & COMMAND_FLAG_ALIAS_ONLY) &&
+        def->type == COMMAND_PARAM_TYPE_INT64)
+        return "string choice";
+
+    switch (def->type) {
     case COMMAND_PARAM_TYPE_STR: return "string";
     case COMMAND_PARAM_TYPE_INT64: return "integer";
     case COMMAND_PARAM_TYPE_INT64_S: return "integer, with kib/mib/gib suffix";
@@ -461,7 +465,7 @@ void command_list_help(const struct command_def *cmds, struct logfn lfn,
             const struct command_param_def *def = &cmd_def->params[p];
 
             logline(lfn, "      %-15s %s\n", def->name, def->desc);
-            logline(lfn, "    %-17s Type: %s\n", "", get_type_help(def->type));
+            logline(lfn, "    %-17s Type: %s\n", "", get_type_help(def));
             if (def->def) {
                 logline(lfn, "    %-17s Default: '%s'\n", "", def->def);
             } else {
@@ -493,6 +497,16 @@ void command_list_help(const struct command_def *cmds, struct logfn lfn,
         logline(lfn, "interpreting '--something...' as option name.\n");
         logline(lfn, "Or: {\"command\":\"cmd-name\",\"paramname1\":\"paramvalue1\", ...}\n");
     }
+}
+
+static void set_cmd_def_from_opt_def(struct command_param_def *dst,
+                                     const struct option_def *src)
+{
+    *dst = (struct command_param_def){
+        .type = src->type,
+        .flags = src->flags,
+        .aliases = src->aliases,
+    };
 }
 
 static const struct option_def *find_opt(const struct option_def *opts,
@@ -528,9 +542,8 @@ bool options_set_json(struct logfn log, const struct option_def *opts,
         return false;
     }
 
-    struct command_param_def def = {
-        .type = opt->type,
-    };
+    struct command_param_def def;
+    set_cmd_def_from_opt_def(&def, opt);
 
     void *field_ptr = (char *)target + opt->offset;
 
@@ -624,8 +637,18 @@ error:
     logline(log, "error: error at argument '%s'\n", argv[0]);
     logline(log, "Usage:\n");
     for (const struct option_def *opt = opts; opt->name; opt++) {
-        logline(log, "  --%-*s%s (%s)\n", 20, opt->name, opt->desc,
-                get_type_help(opt->type));
+        struct command_param_def def;
+        set_cmd_def_from_opt_def(&def, opt);
+        logline(log, "  --%-22s%s (%s)\n", opt->name, opt->desc,
+                get_type_help(&def));
+        if (def.aliases) {
+            logline(log, "    %22s  Choices:\n", "");
+            for (size_t n = 0; def.aliases[n].user_val; n++) {
+                logline(log, "    %22s     %s (%s)\n", "",
+                        def.aliases[n].user_val,
+                        def.aliases[n].desc);
+            }
+        }
     }
     logline(log, "Usually: --optname optvalue\n");
     logline(log, "Bool options implicitly use 'true' if no value is provided.\n");

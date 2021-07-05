@@ -29,7 +29,9 @@ enum command_param_type {
 };
 
 enum command_flags {
-    COMMAND_FLAG_RUNTIME = (1 << 0), // can be changed by options_set()
+    COMMAND_FLAG_RUNTIME    = (1u << 0), // can be changed by options_set()
+    COMMAND_FLAG_ALIAS_ONLY = (1u << 1), // only allow values in the aliases[]
+                                         // list, reject all others
 };
 
 #define COMMAND_MAX_PARAMS 10
@@ -37,6 +39,8 @@ enum command_flags {
 struct command_alias_val {
     const char *user_val;
     const char *param_val;
+    // desc must be set for options, but is ignored for commands.
+    const char *desc;
 };
 
 struct command_param_def {
@@ -44,6 +48,7 @@ struct command_param_def {
     enum command_param_type type;
     const char *def;                // if NULL => non-optional
     const char *desc;
+    unsigned flags;                 // bitset of COMMAND_FLAG_*
     // Aliases: replace user input matching .user_val with .param_val.
     // Use PARAM_ALIASES to set this (it also terminates the array correctly).
     const struct command_alias_val *aliases;
@@ -95,6 +100,9 @@ struct option_def {
     enum command_param_type type;   // type pointed to by offset
     const char *desc;               // description for help output
     unsigned flags;                 // bitset of COMMAND_FLAG_*
+    // Aliases: replace user input matching .user_val with .param_val.
+    // Use PARAM_ALIASES to set this (it also terminates the array correctly).
+    const struct command_alias_val *aliases;
 };
 
 // Parse argv and write the result to a struct pointed to by target, using the

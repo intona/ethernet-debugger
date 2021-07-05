@@ -961,6 +961,10 @@ static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
         LOG(cctx, "Firmware version: %d.%02d\n", desc.bcdDevice >> 8,
             desc.bcdDevice & 0xFF);
 
+        char name[USB_DEVICE_NAME_LEN];
+        if (usb_get_device_name(libusb_get_device(dev->dev), name, sizeof(name)))
+            LOG(cctx, "Device address: %s\n", name);
+
         char serial[USB_DEVICE_SERIAL_LEN];
         if (usb_get_device_serial(libusb_get_device(dev->dev), serial, sizeof(serial)))
             LOG(cctx, "Serial number: %s\n", serial);

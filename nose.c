@@ -40,6 +40,10 @@
 #include <knownfolders.h>
 #endif
 
+#ifndef SIZE_MAX
+#define SIZE_MAX ((size_t)-1)
+#endif
+
 extern char **environ;
 
 static const struct command_def command_list[];
@@ -111,11 +115,13 @@ const struct option_def option_list[] = {
     {"capture-soft-buffer", offsetof(struct options, softbuf),
         COMMAND_PARAM_TYPE_INT64_S,
         "Capture soft buffer (in bytes)",
-        .flags = COMMAND_FLAG_RUNTIME},
+        .flags = COMMAND_FLAG_RUNTIME,
+        .irange = {1, SIZE_MAX / 2}},
     {"capture-usb-buffer", offsetof(struct options, usbbuf),
         COMMAND_PARAM_TYPE_INT64_S,
         "Capture libusb buffer (in bytes)",
-        .flags = COMMAND_FLAG_RUNTIME},
+        .flags = COMMAND_FLAG_RUNTIME,
+        .irange = {1, SIZE_MAX / 2}},
     {"capture-stats", offsetof(struct options, capture_stats),
         COMMAND_PARAM_TYPE_BOOL,
         "Show capture statistics every 1 seconds.",
@@ -701,6 +707,21 @@ static struct device *require_dev(struct command_ctx *cctx)
     return ctx->usb_dev;
 }
 
+// Extra validation for PHY_SELECT parameters (in val), for which selecting no
+// port makes no sense.
+static bool check_ports(struct command_ctx *cctx, int val)
+{
+    if (!val) {
+        // Is this error message too smug?
+        LOG(cctx, "Error: you passed 0 or none as PHY argument. This would do "
+                  "nothing (as it would affect no PHY) and is thus rejected "
+                  "as potential user error.\n");
+        cctx->success = false;
+        return false;
+    }
+    return true;
+}
+
 static void cmd_mdio_read(struct command_ctx *cctx, struct command_param *params,
                           size_t num_params)
 {
@@ -714,6 +735,9 @@ static void cmd_mdio_read(struct command_ctx *cctx, struct command_param *params
     int p = params[2].p_int;
     if (p >= 0)
         reg = MDIO_PAGE_REG(p, reg);
+
+    if (!check_ports(cctx, phy))
+        return;
 
     int r;
     int regs[2] = {-1, -1};
@@ -752,12 +776,16 @@ static void cmd_mdio_write(struct command_ctx *cctx, struct command_param *param
     if (!dev)
         return;
 
+    int ports = params[0].p_int;
     int reg = params[1].p_int;
     int p = params[3].p_int;
     if (p >= 0)
         reg = MDIO_PAGE_REG(p, reg);
 
-    int r = device_mdio_write(dev, params[0].p_int, reg, params[2].p_int);
+    if (!check_ports(cctx, ports))
+        return;
+
+    int r = device_mdio_write(dev, ports, reg, params[2].p_int);
     if (r >= 0) {
         LOG(cctx, "success\n");
     } else {
@@ -885,6 +913,9 @@ static void cmd_disrupt(struct command_ctx *cctx, struct command_param *params,
     int skip = CLAMP(params[3].p_int, 0, (1 << 4));
     int offset = CLAMP(params[4].p_int, 0, (1 << 12));
 
+    if (!check_ports(cctx, ports))
+        return;
+
     uint32_t cmd = ((ports & 3u) << (24 + 6)) | (drop << (24 + 5)) | (2 << 24) |
                    (num << 16) | (skip << 12) | offset;
 
@@ -910,6 +941,9 @@ static void cmd_inject(struct command_ctx *cctx, struct command_param *params,
     int repeat = CLAMP(params[3].p_int, 0, 15);
     int gap = CLAMP(params[4].p_int, 0, 0xFFFF);
     int random = CLAMP(params[5].p_int, 0, DEV_INJECT_ETH_BUF_SIZE);
+
+    if (!check_ports(cctx, ports))
+        return;
 
     uint8_t *bytes = NULL;
     size_t size = 0;
@@ -1264,7 +1298,8 @@ static void on_extcap_ctrl_out(void *ud, struct pipe *p, unsigned events)
 
 #define PHY_SELECT \
     {"phy", COMMAND_PARAM_TYPE_INT64, NULL, "Port/PHY", \
-     PARAM_ALIASES({"A", "1"}, {"B", "2"}, {"AB", "3"}, {"none", "0"})}
+     PARAM_ALIASES({"A", "1"}, {"B", "2"}, {"AB", "3"}, {"none", "0"}), \
+     .irange = {0, 3}}
 
 static const struct command_def command_list[] = {
     {"help", "List commands", cmd_help, {
@@ -1278,13 +1313,20 @@ static const struct command_def command_list[] = {
     {"capture_stop", "Stop capture", cmd_grab_stop, },
     {"mdio_read", "Read MDIO register", cmd_mdio_read, {
         PHY_SELECT,
-        {"address", COMMAND_PARAM_TYPE_INT64, NULL, "MDIO register address"},
-        {"page", COMMAND_PARAM_TYPE_INT64, "-1", "Register page (-1=NOP)"}, }},
+        {"address", COMMAND_PARAM_TYPE_INT64, NULL, "MDIO register address",
+         .irange = {0, 31}},
+        {"page", COMMAND_PARAM_TYPE_INT64, "-1", "Register page (-1=NOP)",
+         .irange = {-1, 255}},
+    }},
     {"mdio_write", "Write MDIO register", cmd_mdio_write, {
         PHY_SELECT,
-        {"address", COMMAND_PARAM_TYPE_INT64, NULL, "MDIO register address"},
-        {"value", COMMAND_PARAM_TYPE_INT64, NULL, "new register value"},
-        {"page", COMMAND_PARAM_TYPE_INT64, "-1", "Register page (-1=NOP)"}, }},
+        {"address", COMMAND_PARAM_TYPE_INT64, NULL, "MDIO register address",
+         .irange = {0, 31}},
+        {"value", COMMAND_PARAM_TYPE_INT64, NULL, "new register value",
+         .irange = {0, 65535}},
+        {"page", COMMAND_PARAM_TYPE_INT64, "-1", "Register page (-1=NOP)",
+         .irange = {-1, 255}},
+    }},
     {"speed", "Set Ethernet speed on both ports", cmd_set_speed, {
         {"speed", COMMAND_PARAM_TYPE_STR, "one of 10, 100, 1000, same, manual"}, }},
     {"disrupt", "Packet disruptor", cmd_disrupt, {

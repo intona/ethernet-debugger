@@ -432,9 +432,14 @@ done:
 
 static const char *get_type_help(const struct command_param_def *def)
 {
-    if ((def->flags & COMMAND_FLAG_ALIAS_ONLY) &&
-        def->type == COMMAND_PARAM_TYPE_INT64)
-        return "string choice";
+
+
+    if (def->type == COMMAND_PARAM_TYPE_INT64) {
+        if (def->flags & COMMAND_FLAG_ALIAS_ONLY)
+            return "string choice";
+        if (def->aliases)
+            return "integer or string choice";
+    }
 
     switch (def->type) {
     case COMMAND_PARAM_TYPE_STR: return "string";

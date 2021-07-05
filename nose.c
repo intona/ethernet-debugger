@@ -166,6 +166,7 @@ struct nose_ctx {
     struct pipe *signalfd;
     struct logfn log;
     atomic_bool log_indirect;
+    atomic_int log_r_len;
     bool mute_terminal;
     bool exit_on_capture_stop;
     bool extcap_active;
@@ -202,19 +203,38 @@ static void log_write_lev(void *pctx, const char *fmt, va_list va, int lev)
     if (lev > ctx->opts.verbosity)
         return;
 
-    if (!ctx->log_indirect)
+    if (!ctx->log_indirect) {
+        // Prettify output that is using \r somewhat: if the previous log line
+        // ended in \r, but the new one does not, then insert an additional \n
+        // before the new line. (Except if the entire line is "\n".)
+        size_t len = strlen(buf);
+        int old_len = ctx->log_r_len;
+        bool has_r = len && buf[len - 1] == '\r';
+        ctx->log_r_len = has_r ? len - 1 : -1;
+        if (old_len >= 0 && !has_r && strcmp(buf, "\n") != 0)
+            printf("\n");
+        // Also, if the previous log line was \r, and the current one also is,
+        // then append space characters to clear the previous line (using the
+        // ANSI EL escape sequence would be nicer, but what about win32?).
+        if (old_len > 0 && has_r && old_len > len && old_len < MAX_LOG_RECORD) {
+            memset(&buf[len - 1], ' ', old_len + 1 - len);
+            buf[old_len + 1] = '\r';
+            buf[old_len + 2] = '\0';
+        }
         printf("%s", buf);
+        fflush(stdout);
+    }
 
     // Split by lines, because it's convenient.
     char *cur = buf;
     while (cur[0]) {
-        size_t len = strcspn(cur, "\n");
+        size_t len = strcspn(cur, "\n\r");
         uint16_t tlen = MIN(len, MAX_LOG_RECORD);
         pthread_mutex_lock(&ctx->log_fifo_writer_lock);
         // Silently discard if it doesn't fit in completely.
         byte_fifo_write_atomic_2(&ctx->log_fifo, &tlen, 2, cur, tlen);
         pthread_mutex_unlock(&ctx->log_fifo_writer_lock);
-        cur += len + (cur[len] == '\n');
+        cur += len + (cur[len] == '\n' || cur[len] == '\r');
     }
     event_signal(ctx->log_event);
 }

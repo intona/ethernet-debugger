@@ -53,6 +53,8 @@ void logline(struct logfn ctx, const char *fmt, ...);
 
 // For convenience: can be used with any kind of context struct, as long as
 // that struct has a "struct logfn log;" field.
+// Another convention is to terminate it with '\r', which depending on the log
+// sink will actually output \r for e.g. showing progress messages.
 #define LOG(ctx, ...) logline((ctx)->log, __VA_ARGS__)
 
 // Similar convention as with LOG(), but (by convention) lower verbosity level.

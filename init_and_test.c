@@ -302,8 +302,11 @@ void run_init_and_test(struct global *global, char *device, char *serial)
 
     // Disrupt command to both ports, prevents propagating test packets when
     // using a loopback cable.
-    uint32_t cmd = (3u << (24 + 6)) | (1 << (24 + 5)) | (2 << 24) | (0xFF << 16);
-    if (device_config_raw(dev, &cmd, 1, NULL, NULL) < 0)
+    struct device_disrupt_params dp = {
+        .num_packets = UINT32_MAX,
+        .mode = DEVICE_DISRUPT_DROP,
+    };
+    if (device_disrupt_pkt(log, dev, 3u, &dp) < 0)
         _Exit(8);
 
     logline(log, "Starting capture, discarding input...\n");
@@ -344,12 +347,19 @@ void run_init_and_test(struct global *global, char *device, char *serial)
             const void *payload = port ? testpkt2 : testpkt1;
             size_t size = port ? sizeof(testpkt2) : sizeof(testpkt1);
 
+            struct device_inject_params params = {
+                .num_packets = 1,
+                .raw = 1,
+                .data = payload,
+                .data_size = size,
+            };
+
             test_ctx.phy[port].expect_data = payload;
             test_ctx.phy[port].expect_size = size;
 
             // Inject through opposite port.
             size_t otherport = !port;
-            if (!device_inject_pkt(log, dev, 1 << otherport, 0, 12, payload, size))
+            if (device_inject_pkt(log, dev, 1 << otherport, &params) < 0)
                 _Exit(10);
 
             sleep(1);
@@ -365,8 +375,8 @@ void run_init_and_test(struct global *global, char *device, char *serial)
     }
 
     // Disable disruptor
-    cmd = (3u << (24 + 6)) | (1 << (24 + 5)) | (2 << 24);
-    if (device_config_raw(dev, &cmd, 1, NULL, NULL) < 0)
+    dp.num_packets = 0;
+    if (device_disrupt_pkt(log, dev, 3u, &dp) < 0)
         _Exit(13);
 
     char devserial[256] = {0};

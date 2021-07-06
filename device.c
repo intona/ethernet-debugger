@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "crc32.h"
 #include "device.h"
 #include "global.h"
 #include "usb_control.h"
 #include "utils.h"
 
 const char *const port_names[4] = {"none", "A", "B", "AB"};
+
+// Send/receive maximum size in 32 bit units.
+#define CFG_BUF_WORDS 128
 
 // Note: internals still need to acquire dev->lock outside of this for fields
 //       which are used by other threads (e.g. libusb).
@@ -528,8 +532,76 @@ struct device *device_open(struct global *global, const char *devname)
     return device_open_with_handle(global, handle);
 }
 
-bool device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
-                       int repeat, int gap, const void *data, size_t size)
+// read count registers at reg0...reg0+count-1 into vals[0]...vals[count-1]
+static bool regs_read(struct logfn logfn, struct device *dev, uint32_t reg0,
+                      uint32_t *vals, uint32_t count)
+{
+    while (count) {
+        size_t num = MIN(count, CFG_BUF_WORDS - 2);
+        uint32_t cmd[2] = {(8 << 24) | (reg0 & 0xFFFFFF), num};
+
+        uint32_t *rep;
+        size_t rep_num;
+        int r = device_config_raw(dev, cmd, 2, &rep, &rep_num);
+        if (r < 0) {
+            logline(logfn, "error: failed to send request to device\n");
+            return false;
+        }
+        if (rep_num < 2 || rep_num - 2 != num || rep[1]) {
+            logline(logfn, "error: processing reg read command on device\n");
+            free(rep);
+            return false;
+        }
+
+        for (size_t n = 0; n < num; n++)
+            vals[n] = rep[2 + n];
+
+        vals += num;
+        count -= num;
+        reg0 += num;
+
+        free(rep);
+    }
+    return true;
+}
+
+// write count registers at reg0...reg0+count-1 from vals[0]...vals[count-1]
+static bool regs_write(struct logfn logfn, struct device *dev, uint32_t reg0,
+                       uint32_t *vals, uint32_t count)
+{
+    while (count) {
+        size_t num = MIN(count, CFG_BUF_WORDS - 1);
+        uint32_t cmd[CFG_BUF_WORDS];
+        cmd[0] = ((0x40 | 8) << 24) | (reg0 & 0xFFFFFF);
+        for (size_t n = 0; n < num; n++)
+            cmd[n + 1] = vals[n];
+
+        uint32_t *rep;
+        size_t rep_num;
+        int r = device_config_raw(dev, cmd, 1 + num, &rep, &rep_num);
+        if (r < 0) {
+            logline(logfn, "error: failed to send request to device\n");
+            return false;
+        }
+        if (rep_num != 2 || rep[1]) {
+            logline(logfn, "error: processing reg write command on device\n");
+            free(rep);
+            return false;
+        }
+
+        vals += num;
+        count -= num;
+        reg0 += num;
+
+        free(rep);
+    }
+    return true;
+}
+
+// pre 1.06 firmware
+#define DEV_INJECT_PKT_BUF_SIZE (1 << 5)
+static bool device_inject_pkt_old(struct logfn logfn, struct device *dev, unsigned ports,
+                                  int repeat, int gap, const void *data, size_t size)
 {
     device_cfg_lock(dev);
 
@@ -571,4 +643,282 @@ bool device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
 
     device_cfg_unlock(dev);
     return success;
+}
+
+// Send packet injector command.
+int device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
+                      const struct device_inject_params *params)
+{
+    uint32_t gap = params->gap;
+    if (!gap)
+        gap = 12;
+
+    static_assert(DEV_INJECT_ETH_BUF_SIZE < (1 << 30) / 4, "possibly overflows");
+    if (params->data_size > DEV_INJECT_ETH_BUF_SIZE ||
+        params->append_random > DEV_INJECT_ETH_BUF_SIZE ||
+        params->append_zero > DEV_INJECT_ETH_BUF_SIZE)
+    {
+        // Probably a (well defined) integer overflow?
+        logline(logfn, "error: packet too large\n");
+        return -1;
+    }
+
+    size_t size = params->data_size;
+    size += params->append_random;
+    size += params->append_zero;
+    size_t extra_zeros = 0;
+    if (!params->raw) {
+        size += 4; // FCS
+        if (size < 64) {
+            extra_zeros = 64 - size;
+            size += extra_zeros;
+        }
+        size += 8; // preamble, SFD
+    }
+
+    // Aligned to 32 bit, so we can pass it to regs_write().
+    size_t full_size = (size + 3) & ~3u;
+    uint8_t *data = calloc(1, full_size);
+    size_t offset = 0;
+    if (!data) {
+        logline(logfn, "error: out of memory\n");
+        return -1;
+    }
+
+    if (!params->raw) {
+        memcpy(data + offset, "UUUUUUU\xD5", 8);
+        offset += 8;
+    }
+
+    if (params->data_size) {
+        memcpy(data + offset, params->data, params->data_size);
+        offset += params->data_size;
+    }
+
+    for (size_t n = 0; n < params->append_random; n++)
+        data[offset++] = rand() & 0xFF;
+
+    offset += params->append_zero + extra_zeros;
+
+    if (!params->raw) {
+        uint32_t crc = crc32(~(uint32_t)0, data + 8, offset - 8);
+        memcpy(data + offset, &crc, 4);
+        offset += 4;
+    }
+
+    assert(offset == size);
+
+    if (dev->fw_version < 0x106) {
+        // Partial emulation with old firmware.
+        uint32_t repeat = params->num_packets;
+        if (!repeat) {
+            free(data);
+            data = NULL;
+            size = 0;
+            repeat = 1;
+        }
+        if (repeat == UINT32_MAX) {
+            repeat = 15;
+        } else {
+            repeat = MIN(repeat - 1, 14);
+        }
+        gap = MIN(gap, 0xFFFF);
+        bool r = device_inject_pkt_old(logfn, dev, ports, repeat, gap, data, size);
+        free(data);
+        return r ? 0 : -1;
+    }
+
+    device_cfg_lock(dev);
+
+    unsigned enable_ports = 0;
+
+    for (size_t port = 0; port < 2; port++) {
+        if (!(ports & (1 << port)))
+            continue;
+
+        uint32_t reg_base = (2 + port) << 20;
+
+        // Request disable sending.
+        regs_write(logfn, dev, reg_base + 0, &(uint32_t){0}, 1);
+
+        // Wait until sending is done. This polls, but normally it stops quickly
+        // enough that all the USB ping-pong takes longer. Also, it might be
+        // nice to employ a timeout for frozen devices, but hopefully that
+        // happens during device firmware development at most.
+        while (1) {
+            uint32_t reg;
+            if (!regs_read(logfn, dev, reg_base + 32, &reg, 1))
+                goto error;
+
+            if (!reg)
+                break;
+        }
+
+        // Apply new parameters.
+
+        uint32_t repeat = params->num_packets;
+        if (repeat != UINT32_MAX)
+            repeat -= 1;
+
+        uint32_t corrupt_at = params->corrupt_at;
+        if (!params->enable_corrupt)
+            corrupt_at = UINT32_MAX;
+
+        uint32_t offset = 0;        // (always 0 for now)
+        uint32_t regs[] = {
+            0,                      // send_enabled (set later)
+            offset,                 // packet_offset
+            size,                   // packet_size
+            repeat,                 // packet_repeat
+            gap,                    // packet_gap
+            corrupt_at,             // packet_err_offset
+        };
+
+        if (!regs_write(logfn, dev, reg_base, regs, ARRAY_LENGTH(regs)))
+            goto error;
+
+        // Upload packet data.
+        uint32_t addr = reg_base + 0x100 + offset / 4;
+        if (!regs_write(logfn, dev, addr, (uint32_t *)data, full_size))
+            goto error;
+
+        // Send enable if wanted.
+        if (params->num_packets)
+            enable_ports |= 1 << port;
+    }
+
+    if (enable_ports) {
+        // Special command to synchronously set send_enabled to 1 on all ports.
+        if (!regs_write(logfn, dev, (1 << 20) | 1, &(uint32_t){enable_ports}, 1))
+            goto error;
+    }
+
+    free(data);
+    device_cfg_unlock(dev);
+    return 0;
+
+error:
+    free(data);
+    device_cfg_unlock(dev);
+    return -1;
+}
+
+// pre 1.06 firmware
+static int device_disrupt_pkt_old(struct logfn logfn, struct device *dev, unsigned ports,
+                                  const struct device_disrupt_params *params)
+{
+    bool drop = params->mode == DEVICE_DISRUPT_DROP;
+    int num = MIN(params->num_packets, 0xFF);
+    int skip = MIN(params->skip, (1 << 4));
+    int offset = MIN(params->offset, (1 << 12));
+
+    uint32_t cmd = ((ports & 3u) << (24 + 6)) | (drop << (24 + 5)) | (2 << 24) |
+                   (num << 16) | (skip << 12) | offset;
+
+    int r = device_config_raw(dev, &cmd, 1, NULL, NULL);
+    if (r < 0)
+        logline(logfn, "error: failed to send command\n");
+    return r;
+}
+
+// Send packet disrupt command.
+int device_disrupt_pkt(struct logfn logfn, struct device *dev, unsigned ports,
+                       const struct device_disrupt_params *params)
+{
+    if (dev->fw_version < 0x106)
+        return device_disrupt_pkt_old(logfn, dev, ports, params);
+
+    device_cfg_lock(dev);
+
+    for (size_t port = 0; port < 2; port++) {
+        if (!(ports & (1 << port)))
+            continue;
+
+        uint32_t reg_base = (4 + port) << 20;
+
+        // Apply new parameters.
+
+        uint32_t raw_mode = 0;
+        switch (params->mode) {
+        case DEVICE_DISRUPT_BIT_FLIP:   raw_mode = 0; break;
+        case DEVICE_DISRUPT_DROP:       raw_mode = 1; break;
+        case DEVICE_DISRUPT_BIT_ERR:    raw_mode = 2; break;
+        }
+
+        uint32_t regs[] = {
+            0,                      // control (set later)
+            params->num_packets,    // packet_num
+            params->skip,           // packet_skip
+            params->offset,         // packet_offset
+            raw_mode,               // packet_drop
+        };
+
+        if (!regs_write(logfn, dev, reg_base, regs, ARRAY_LENGTH(regs)))
+            goto error;
+    }
+
+    if (ports) {
+        // Special command to synchronously set control to 1 on all ports.
+        // This is actually not truly synchronous.
+        if (!regs_write(logfn, dev, (1 << 20) | 2, &(uint32_t){ports & 3u}, 1))
+            goto error;
+    }
+
+    device_cfg_unlock(dev);
+    return 0;
+
+error:
+    device_cfg_unlock(dev);
+    return -1;
+}
+
+int device_setting_read(struct logfn logfn, struct device *dev, uint32_t id,
+                        uint32_t *out_val)
+{
+    int r = -1;
+    uint32_t *rep = NULL;
+    size_t rep_num = 0;
+    device_cfg_lock(dev);
+
+    uint32_t cmd = (6 << 24) |                  // command: setting r/w
+                   (id & 0xFFFFFF);             // setting ID
+
+    r = device_config_raw(dev, &cmd, 1, &rep, &rep_num);
+    if (r < 0)
+        goto done;
+
+    if (rep_num != 3 || rep[1])
+        goto done;
+
+    *out_val = rep[2];
+    r = 0;
+
+done:
+    if (r < 0)
+        *out_val = 0;
+    free(rep);
+    device_cfg_unlock(dev);
+    return r;
+}
+
+int device_setting_write(struct logfn logfn, struct device *dev, uint32_t id,
+                        uint32_t val)
+{
+    int r = -1;
+    uint32_t *rep = NULL;
+    size_t rep_num = 0;
+    device_cfg_lock(dev);
+
+    uint32_t cmd[2] = {(1 << 30) |                  // W bit
+                       (6 << 24) |                  // command: setting r/w
+                       (id & 0xFFFFFF),             // setting ID
+                       val};
+
+    r = device_config_raw(dev, cmd, 2, &rep, &rep_num);
+    if (r >= 0)
+        r = (rep_num == 3 && !rep[1]) ? 0 : -1;
+
+    free(rep);
+    device_cfg_unlock(dev);
+    return r;
 }

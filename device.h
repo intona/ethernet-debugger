@@ -35,10 +35,7 @@ extern const char *const port_names[4];
 // Address register on a specific page. This is translated to 2 MDIO commands.
 #define MDIO_PAGE_REG(page, reg) (REG_FORCE_PAGE | ((page) << 6) | ((reg) & 0x3f))
 
-// Size of inject command payload buffer in words (APP_ADDR_BITS).
-#define DEV_INJECT_PKT_BUF_SIZE (1 << 5)
-
-// Size of inject command packet buffer in bytes (ETH_ADDR_BITS).
+// Size of inject command packet buffer in bytes (PKT_ADDR_BITS).
 #define DEV_INJECT_ETH_BUF_SIZE (1 << 14)
 
 // Send a raw configuration packet, and wait for a reply. By definition, every
@@ -79,9 +76,77 @@ int device_mdio_read_both(struct device *dev, int reg, int out_val[2]);
 //  returns: ==0: success, <0: error code
 int device_mdio_write(struct device *dev, unsigned ports, int reg, int val);
 
-// Send packet injector command. See cfg_interface.v.
-bool device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
-                       int repeat, int gap, const void *data, size_t size);
+// All fields have mostly reasonable default at 0 init.
+struct device_inject_params {
+    uint32_t num_packets;   // number of packets to inject (UINT32_MAX for
+                            // infinite; 0 for disable sending)
+    bool raw;               // if true, don't add preamble
+    bool enable_corrupt;    // if true, use corrupt_at
+    const void *data;       // pointer to packet data to send
+    size_t data_size;       // number of bytes valid in *data
+    uint32_t append_random; // number of pseudo-random bytes to append after data
+    uint32_t append_zero;   // number of 0 bytes to append after random bytes
+    uint32_t gap;           // 0 uses default
+    uint32_t corrupt_at;    // make PHY emit invalid ethernet symbol here
+                            // ignored if enable_corrupt==false
+};
+
+// Send packet injector command.
+//  logfn: for error messages
+//  dev: target device
+//  ports: DEV_PORT_* bit mask
+//  params: ...
+//  returns: ==0: success, <0: error code
+int device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
+                      const struct device_inject_params *params);
+
+enum device_disrupt_mode {
+    DEVICE_DISRUPT_BIT_FLIP,    // invert a pseudo-random bit
+    DEVICE_DISRUPT_BIT_ERR,     // make PHY emit invalid ethernet symbol
+    DEVICE_DISRUPT_DROP,        // drop the entire packet
+};
+
+struct device_disrupt_params {
+    uint32_t num_packets;   // number of packets to affect
+                            // UINT32_MAX for infinite; 0 for disable all
+    enum device_disrupt_mode mode; // how to do it
+    uint32_t skip;          // number of packets to skip each time
+                            // (1 = corrupt every 2nd packet)
+    uint32_t offset;        // byte offset to corrupt (0 = 1st byte of preamble)
+};
+
+// Send packet disrupt command.
+//  logfn: for error messages
+//  dev: target device
+//  ports: DEV_PORT_* bit mask
+//  params: ...
+//  returns: ==0: success, <0: error code
+int device_disrupt_pkt(struct logfn logfn, struct device *dev, unsigned ports,
+                       const struct device_disrupt_params *params);
+
+enum {
+    // Speed mode (see code)
+    DEVICE_SETTING_SPEED_MODE       = 1,
+};
+
+// Read a setting that is persistently stored on the device.
+//  logfn: for error messages
+//  dev: target device
+//  id: settings ID, one of DEVICE_SETTING_*
+//  out_val: overwritten with setting value (or 0 on failure)
+//  returns: ==0: success, <0: error code
+int device_setting_read(struct logfn logfn, struct device *dev, uint32_t id,
+                        uint32_t *out_val);
+
+// Write a setting that is persistently stored on the device. If applicable, the
+// device immediately uses the new value.
+//  logfn: for error messages
+//  dev: target device
+//  id: settings ID, one of DEVICE_SETTING_*
+//  val: new value
+//  returns: ==0: success, <0: error code
+int device_setting_write(struct logfn logfn, struct device *dev, uint32_t id,
+                        uint32_t val);
 
 // Get exclusive access to running configuration commands within the current
 // thread. This roughly works like a recursive pthread_mutex_lock().

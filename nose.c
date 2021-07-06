@@ -15,7 +15,6 @@
 #include <unistd.h>
 
 #include "cmd_parser.h"
-#include "crc32.h"
 #include "device.h"
 #include "event_loop.h"
 #include "fifo.h"
@@ -841,13 +840,8 @@ static void cmd_set_speed(struct command_ctx *cctx, struct command_param *params
 
         r = device_mdio_write(dev, 3, 0, v);
     } else {
-        uint32_t cmd = (6 << 24) | (fw_speed_mode << 8) | 1;
-        uint32_t *res = NULL;
-        size_t res_num = 0;
-        r = device_config_raw(dev, &cmd, 1, &res, &res_num);
-        if (res_num < 2 || (res[1] & 0xFF))
-            r = -2;
-        free(res);
+        r = device_setting_write(cctx->log, dev, DEVICE_SETTING_SPEED_MODE,
+                                 fw_speed_mode);
     }
 
     if (r >= 0) {
@@ -908,22 +902,27 @@ static void cmd_disrupt(struct command_ctx *cctx, struct command_param *params,
         return;
 
     int ports = params[0].p_int;
-    bool drop = params[1].p_bool;
-    int num = CLAMP(params[2].p_int, 0, 0xFF);
-    int skip = CLAMP(params[3].p_int, 0, (1 << 4));
-    int offset = CLAMP(params[4].p_int, 0, (1 << 12));
+    int64_t mode = params[1].p_int;
+
+    struct device_disrupt_params p = {
+        .num_packets    = params[2].p_int,
+        .skip           = params[3].p_int,
+        .offset         = params[4].p_int,
+    };
 
     if (!check_ports(cctx, ports))
         return;
 
-    uint32_t cmd = ((ports & 3u) << (24 + 6)) | (drop << (24 + 5)) | (2 << 24) |
-                   (num << 16) | (skip << 12) | offset;
-
-    int r = device_config_raw(dev, &cmd, 1, NULL, NULL);
-    if (r < 0) {
-        LOG(cctx, "error: failed to send command\n");
+    switch (mode) {
+    case 0: p.mode = DEVICE_DISRUPT_DROP; break;
+    case 1: p.mode = DEVICE_DISRUPT_BIT_FLIP; break;
+    case 2: p.mode = DEVICE_DISRUPT_BIT_ERR; break;
+    default:
+        LOG(cctx, "error: invalid mode parameter\n");
         cctx->success = false;
     }
+
+    cctx->success = device_disrupt_pkt(cctx->log, dev, ports, &p) >= 0;
 }
 
 static void cmd_block_ports(struct command_ctx *cctx, struct command_param *params,
@@ -933,14 +932,18 @@ static void cmd_block_ports(struct command_ctx *cctx, struct command_param *para
     if (!dev)
         return;
 
+    struct device_disrupt_params p = {
+        .mode           = DEVICE_DISRUPT_DROP,
+        .num_packets    = UINT32_MAX,
+    };
+
     int block = params[0].p_int;
     int unblock = 3u & ~(block & 3u);
 
-    uint32_t cmd = ((unblock & 3u) << (24 + 6)) | (1 << (24 + 5)) | (2 << 24);
-    int r1 = device_config_raw(dev, &cmd, 1, NULL, NULL);
+    int r1 = device_disrupt_pkt(cctx->log, dev, block, &p);
 
-    cmd = ((unblock & 3u) << (24 + 6)) | (1 << (24 + 5)) | (2 << 24) | (0xFF << 16);
-    int r2 = device_config_raw(dev, &cmd, 1, NULL, NULL);
+    p.num_packets = 0;
+    int r2 = device_disrupt_pkt(cctx->log, dev, unblock, &p);
 
     if (r1 < 0 || r2 < 0) {
         LOG(cctx, "error: failed to send command\n");
@@ -959,10 +962,19 @@ static void cmd_inject(struct command_ctx *cctx, struct command_param *params,
 
     int ports = params[0].p_int;
     const char *s = params[1].p_str;
-    bool raw = params[2].p_bool;
-    int repeat = CLAMP(params[3].p_int, 0, 15);
-    int gap = CLAMP(params[4].p_int, 0, 0xFFFF);
-    int random = CLAMP(params[5].p_int, 0, DEV_INJECT_ETH_BUF_SIZE);
+
+    struct device_inject_params p = {
+        .raw            = params[2].p_bool,
+        .num_packets    = params[3].p_int,
+        .gap            = params[4].p_int,
+        .append_random  = params[5].p_int,
+        .append_zero    = params[6].p_int,
+    };
+    int64_t corrupt = params[7].p_int;
+    if (corrupt >= 0) {
+        p.enable_corrupt = true;
+        p.corrupt_at = corrupt;
+    };
 
     if (!check_ports(cctx, ports))
         return;
@@ -973,31 +985,10 @@ static void cmd_inject(struct command_ctx *cctx, struct command_param *params,
     if (!parse_hex(cctx->log, s, &bytes, &size))
         goto done;
 
-    size_t payload = size + random;
-    // non-raw => pad to standard size
-    while (size && !raw && payload < 46)
-        payload += 1;
+    p.data = bytes;
+    p.data_size = size;
 
-    size_t nsize = payload + (raw ? 0 : 8 + 4);
-    uint8_t *ndata = xalloc(nsize);
-    memcpy(ndata, bytes, size);
-
-    free(bytes);
-    bytes = ndata;
-
-    for (size_t n = 0; n < random; n++)
-        bytes[size + n] = rand() & 0xFF;
-
-    if (!raw && payload) {
-        uint32_t crc = crc32(~(uint32_t)0, bytes, payload);
-        memmove(bytes + 8, bytes, payload);
-        memcpy(bytes, "UUUUUUU\xD5", 8);
-        memcpy(bytes + 8 + payload, &crc, 4);
-        payload += 8 + 4;
-    }
-
-    cctx->success =
-        device_inject_pkt(cctx->log, dev, ports, repeat, gap, bytes, payload);
+    cctx->success = device_inject_pkt(cctx->log, dev, ports, &p) >= 0;
 
 done:
     free(bytes);
@@ -1056,26 +1047,23 @@ static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
     if (dev->fw_version < 0x106) {
         LOG(cctx, " (none)\n");
     } else {
-        int mode = -1;
-        uint32_t cmd = (6 << 24);
-        res = NULL;
-        res_num = 0;
-        r = device_config_raw(dev, &cmd, 1, &res, &res_num);
-        if (res_num >= 2 && !(res[1] & 0xFF))
-            mode = (res[1] >> 8) & 0xFF;
-        free(res);
+        uint32_t fw_mode;
+        r = device_setting_read(cctx->log, dev, DEVICE_SETTING_SPEED_MODE,
+                                &fw_mode);
 
         const char *name = NULL;
-        switch (mode) {
+        switch (fw_mode) {
         case 0:  name = "same (force speed to PHY with lowest speed)"; break;
         case 1:  name = "10"; break;
         case 2:  name = "100"; break;
         case 3:  name = "1000"; break;
         case 4:  name = "manual (starts out with independent auto-negotiation)"; break;
-        case -1: name = "(failed to read setting)"; break;
         }
+        if (r < 0)
+            name = "(failed to read setting)";
+        char buf[30];
         if (!name)
-            name = stack_sprintf(30, "unknown (%d)", mode);
+            snprintf(buf, sizeof(buf), "unknown (%"PRIu32")", fw_mode);
         LOG(cctx, "    Forced speed: %s\n", name);
     }
 }
@@ -1355,25 +1343,45 @@ static const struct command_def command_list[] = {
         PHY_SELECT }},
     {"disrupt", "Packet disruptor", cmd_disrupt, {
         PHY_SELECT,
-        {"drop", COMMAND_PARAM_TYPE_BOOL, "false", "drop only"},
+        {"mode", COMMAND_PARAM_TYPE_INT64, "drop", "what to do with packets",
+            PARAM_ALIASES({"drop", "0"},
+                          {"corrupt", "1"},
+                          {"err", "2"}),
+            .flags = COMMAND_FLAG_ALIAS_ONLY},
         {"num", COMMAND_PARAM_TYPE_INT64, "1", "number of packets",
-            PARAM_ALIASES({"stop", "0"}, {"all", "0xFF"})},
+            PARAM_ALIASES({"stop", "0"}, {"inf", "4294967295"}),
+            .irange = {0, UINT32_MAX}},
         {"skip", COMMAND_PARAM_TYPE_INT64, "0",
-            "let N packets pass every time"},
-        {"offset", COMMAND_PARAM_TYPE_INT64, "22",
-            "corrupt byte offset (0=preamble)"}, }},
+            "let N packets pass every time",
+            .irange = {0, UINT32_MAX}},
+        {"offset", COMMAND_PARAM_TYPE_INT64, "20",
+            "corrupt byte offset (0=preamble)",
+            .irange = {0, UINT32_MAX}},
+    }},
     {"inject", "Packet injector", cmd_inject, {
         PHY_SELECT,
-        {"data", COMMAND_PARAM_TYPE_STR, NULL,
+        {"data", COMMAND_PARAM_TYPE_STR, "",
             "hex: 0x... 0x.. words, ABCD bytes"},
         {"raw", COMMAND_PARAM_TYPE_BOOL, "false",
             "if true, do not add preamble/SFD/CRC"},
-        {"repeat", COMMAND_PARAM_TYPE_INT64, "0",
-            "repeat count (15==continuous mode)",
-            PARAM_ALIASES({"inf", "15"})},
-        {"gap", COMMAND_PARAM_TYPE_INT64, "12", "minimum IPG before/after"},
-        {"append_random", COMMAND_PARAM_TYPE_INT64, "0",
-            "append this many bytes random data"}, }},
+        {"num", COMMAND_PARAM_TYPE_INT64, "1",
+            "number of packets (inf=continuous mode)",
+            PARAM_ALIASES({"stop", "0"}, {"inf", "4294967295"}),
+            .irange = {0, UINT32_MAX}},
+        {"gap", COMMAND_PARAM_TYPE_INT64, "12",
+            "minimum IPG before/after",
+            .irange = {0, UINT32_MAX}},
+        {"append-random", COMMAND_PARAM_TYPE_INT64, "0",
+            "append this many random bytes",
+            .irange = {0, DEV_INJECT_ETH_BUF_SIZE}},
+        {"append-zero", COMMAND_PARAM_TYPE_INT64, "0",
+            "append this many zero bytes",
+            .irange = {0, DEV_INJECT_ETH_BUF_SIZE}},
+        {"gen-error", COMMAND_PARAM_TYPE_INT64, "-1",
+            "generate error at byte offset",
+            PARAM_ALIASES({"disable", "-1"}),
+            .irange = {-1, UINT32_MAX}},
+    }},
     {"hw_info", "Show hardware information", cmd_hw_info},
     {"reset_device_settings", "Reset settings stored on the device to defaults.",
         cmd_dev_reset_settings },

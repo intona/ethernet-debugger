@@ -1343,7 +1343,7 @@ static void on_extcap_ctrl_out(void *ud, struct pipe *p, unsigned events)
 
 #define PHY_SELECT \
     {"phy", COMMAND_PARAM_TYPE_INT64, NULL, "Port/PHY", \
-     PARAM_ALIASES({"A", "1"}, {"B", "2"}, {"AB", "3"}, {"none", "0"}), \
+     PARAM_ALIASES({"A", "1"}, {"B", "2"}, {"AB", "3"}, {"none", "0"}, {"-", "0"}), \
      .irange = {0, 3}}
 
 static const struct command_def command_list[] = {

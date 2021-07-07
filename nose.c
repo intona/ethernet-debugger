@@ -1085,7 +1085,7 @@ static void cmd_dev_reset_settings(struct command_ctx *cctx,
     uint32_t *res = NULL;
     size_t res_num = 0;
     int r = device_config_raw(dev, &cmd, 1, &res, &res_num);
-    if (res_num < 2 || (res[1] & 0xFF))
+    if (r >= 0 && (res_num < 2 || (res[1] & 0xFF)))
         r = -2;
     free(res);
 

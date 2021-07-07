@@ -127,6 +127,8 @@ int device_disrupt_pkt(struct logfn logfn, struct device *dev, unsigned ports,
 enum {
     // Speed mode (see code)
     DEVICE_SETTING_SPEED_MODE       = 1,
+    // Autospeed PHY wait time in ms
+    DEVICE_SETTING_SPEED_PHY_WAIT   = 2,
 };
 
 // Read a setting that is persistently stored on the device.

@@ -852,6 +852,30 @@ static void cmd_set_speed(struct command_ctx *cctx, struct command_param *params
     }
 }
 
+static void cmd_set_phy_time(struct command_ctx *cctx, struct command_param *params,
+                             size_t num_params)
+{
+    struct device *dev = require_dev(cctx);
+    if (!dev)
+        return;
+
+    if (dev->fw_version < 0x106) {
+        LOG(cctx, "Firmware too old.\n");
+        cctx->success = false;
+        return;
+    }
+
+    uint32_t s = params[0].p_int;
+    int r = device_setting_write(cctx->log, dev, DEVICE_SETTING_SPEED_PHY_WAIT, s);
+
+    if (r >= 0) {
+        LOG(cctx, "setting PHY link up wait time to %"PRIu32" ms.\n", s);
+    } else {
+        LOG(cctx, "error %d\n", r);
+        cctx->success = false;
+    }
+}
+
 static void cmd_cfg_packet(struct command_ctx *cctx, struct command_param *params,
                            size_t num_params)
 {
@@ -1065,6 +1089,17 @@ static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
         if (!name)
             snprintf(buf, sizeof(buf), "unknown (%"PRIu32")", fw_mode);
         LOG(cctx, "    Forced speed: %s\n", name);
+
+        uint32_t phy_wait;
+        r = device_setting_read(cctx->log, dev, DEVICE_SETTING_SPEED_PHY_WAIT,
+                                &phy_wait);
+        char delay[80];
+        if (r < 0) {
+            snprintf(delay, sizeof(delay), "(failed to read setting)");
+        } else {
+            snprintf(delay, sizeof(delay), "%"PRIu32" ms", phy_wait);
+        }
+        LOG(cctx, "    PHY auto-negotiation wait delay: %s\n", delay);
     }
 }
 
@@ -1392,6 +1427,11 @@ static const struct command_def command_list[] = {
     {"set", "Set a command line option.", cmd_set, {
         {"name", COMMAND_PARAM_TYPE_STR, NULL, "option name, without '--'"},
         {"value", COMMAND_PARAM_TYPE_JSON, NULL, "new option value"}, }},
+    {"set_device_phy_wait", "Set PHY link up wait time in ms", cmd_set_phy_time, {
+        {"time", COMMAND_PARAM_TYPE_INT64, NULL,
+            "wait time in MS",
+            .irange = {0, 10737}},
+    }},
     {"exit", "Exit program", cmd_exit },
     {0}
 };

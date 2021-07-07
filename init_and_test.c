@@ -177,6 +177,37 @@ static bool flash_serial(libusb_device_handle *usbdev, struct logfn log,
     return true;
 }
 
+static bool eeprom_access(struct device *dev, bool w, uint16_t addr,
+                          void *buf, size_t sz)
+{
+    if (addr >= (1 << 12) || sz >= (1 << 12))
+        return false;
+    uint32_t cmd[32] = {(9 << 24) | addr | (sz << 12)};
+    size_t in = 1;
+    size_t out = 2;
+    assert(sz <= sizeof(cmd) - 8);
+    size_t words = (sz + 3) / 4;
+    if (w) {
+        memcpy(&cmd[1], buf, sz);
+        in += words;
+        cmd[0] |= (1 << 30);
+    } else {
+        out += words;
+    }
+    uint32_t *rep;
+    size_t rep_num;
+    if (device_config_raw(dev, cmd, in, &rep, &rep_num) < 0)
+        return false;
+    if (rep_num != out || rep[1]) {
+        free(rep);
+        return false;
+    }
+    if (!w)
+        memcpy(buf, &rep[2], sz);
+    free(rep);
+    return true;
+}
+
 void run_init_and_test(struct global *global, char *device, char *serial)
 {
     global->log = (struct logfn){stdout, logfn_stdio};
@@ -274,6 +305,34 @@ void run_init_and_test(struct global *global, char *device, char *serial)
     struct device *dev = device_open(global, device);
     if (!dev)
         _Exit(1);
+
+    if (dev->fw_version >= 0x106) {
+        printf("Checking EEPROM...\n");
+
+        if (!eeprom_access(dev, true, 13, "hello world", 11))
+            _Exit(14);
+        if (!eeprom_access(dev, true, 24, "blarrrgh", 8))
+            _Exit(14);
+        char buf[17];
+        if (!eeprom_access(dev, false, 15, buf, 17))
+            _Exit(14);
+        if (memcmp(buf, "llo worldblarrrgh", 17))
+            _Exit(15);
+
+        // send reset command (clears and initializes EEPROM)
+        uint32_t cmd = (7 << 24);
+        uint32_t *res = NULL;
+        size_t res_num = 0;
+        int r = device_config_raw(dev, &cmd, 1, &res, &res_num);
+        if (r < 0 || res_num < 2 || (res[1] & 0xFF))
+            _Exit(16);
+        free(res);
+
+        if (!eeprom_access(dev, false, 0x63A, buf, 8))
+            _Exit(14);
+        if (memcmp(buf, &(uint64_t){(uint64_t)-1}, 8))
+            _Exit(15);
+    }
 
     logline(log, "Checking mdio...\n");
 
@@ -378,6 +437,8 @@ void run_init_and_test(struct global *global, char *device, char *serial)
     dp.num_packets = 0;
     if (device_disrupt_pkt(log, dev, 3u, &dp) < 0)
         _Exit(13);
+
+    printf("Checking serial number...\n");
 
     char devserial[256] = {0};
     struct libusb_device_descriptor desc;

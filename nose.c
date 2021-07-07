@@ -372,7 +372,7 @@ static void process_command(struct nose_ctx *ctx, char *cmd, struct pipe *p)
 static void cmd_help(struct command_ctx *cctx, struct command_param *params,
                      size_t num_params)
 {
-    command_list_help(command_list, cctx->log, params[0].p_str);
+    command_list_help(command_list, cctx->log, params[0].p_str, false);
 }
 
 static void on_check_links(void *ud, struct timer *t)

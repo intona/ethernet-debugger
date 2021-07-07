@@ -341,7 +341,11 @@ void command_dispatch(const struct command_def *cmds, struct command_ctx *ctx,
 
                 p = find_cmd_param(cmd_def, optname);
                 if (p < 0) {
-                    LOG(ctx, "error: parameter --%s not found\n", optname);
+                    if (strcmp(optname, "help") == 0) {
+                        command_list_help(cmds, ctx->log, cmd_def->name, true);
+                    } else {
+                        LOG(ctx, "error: parameter --%s not found\n", optname);
+                    }
                     goto done;
                 }
                 def = &cmd_def->params[p];
@@ -452,7 +456,7 @@ static const char *get_type_help(const struct command_param_def *def)
 }
 
 void command_list_help(const struct command_def *cmds, struct logfn lfn,
-                       const char *filter)
+                       const char *filter, bool filter_exact)
 {
     bool use_filter = false, any_matches = false;
 
@@ -460,11 +464,11 @@ void command_list_help(const struct command_def *cmds, struct logfn lfn,
         const struct command_def *cmd_def = &cmds[c];
 
         if (filter && filter[0] && strcasecmp(filter, "all") != 0) {
-            if (!use_filter)
+            if (!use_filter && !filter_exact)
                 logline(lfn, "Commands matching '%s':\n\n", filter);
             use_filter = true;
             if (strcasecmp(cmd_def->name, filter) != 0 &&
-                !strstr(cmd_def->desc, filter))
+                !(!filter_exact && strstr(cmd_def->desc, filter)))
                 continue;
             any_matches = true;
         }

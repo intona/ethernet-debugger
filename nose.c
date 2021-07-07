@@ -1615,7 +1615,15 @@ static bool start_wireshark_etc(struct nose_ctx *ctx)
 
     char *argv[] = {ctx->wireshark_path, "-k", "-i", ctx->fifo_path, NULL};
     pid_t pid;
-    if (posix_spawn(&pid, ctx->wireshark_path, NULL, NULL, argv, environ)) {
+    posix_spawnattr_t attr;
+    if (posix_spawnattr_init(&attr))
+        report_oom((size_t)-1, __FILE__, __LINE__);
+#ifdef POSIX_SPAWN_SETSID
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID);
+#endif
+    int r = posix_spawn(&pid, ctx->wireshark_path, NULL, &attr, argv, environ);
+    posix_spawnattr_destroy(&attr);
+    if (r) {
         LOG(ctx, "error: failed to spawn '%s'\n", ctx->wireshark_path);
         return false;
     }

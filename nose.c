@@ -949,6 +949,22 @@ static void cmd_disrupt(struct command_ctx *cctx, struct command_param *params,
     cctx->success = device_disrupt_pkt(cctx->log, dev, ports, &p) >= 0;
 }
 
+static void cmd_disrupt_stop(struct command_ctx *cctx, struct command_param *params,
+                             size_t num_params)
+{
+    struct device *dev = require_dev(cctx);
+    if (!dev)
+        return;
+
+    int ports = params[0].p_int;
+    if (!check_ports(cctx, ports))
+        return;
+
+    struct device_disrupt_params p = {0};
+    cctx->success = device_disrupt_pkt(cctx->log, dev, ports, &p) >= 0;
+}
+
+
 static void cmd_block_ports(struct command_ctx *cctx, struct command_param *params,
                             size_t num_params)
 {
@@ -1016,6 +1032,21 @@ static void cmd_inject(struct command_ctx *cctx, struct command_param *params,
 
 done:
     free(bytes);
+}
+
+static void cmd_inject_stop(struct command_ctx *cctx, struct command_param *params,
+                            size_t num_params)
+{
+    struct device *dev = require_dev(cctx);
+    if (!dev)
+        return;
+
+    int ports = params[0].p_int;
+    if (!check_ports(cctx, ports))
+        return;
+
+    struct device_inject_params p = {0};
+    cctx->success = device_inject_pkt(cctx->log, dev, ports, &p) >= 0;
 }
 
 static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
@@ -1341,10 +1372,12 @@ static void on_extcap_ctrl_out(void *ud, struct pipe *p, unsigned events)
     }
 }
 
-#define PHY_SELECT \
-    {"phy", COMMAND_PARAM_TYPE_INT64, NULL, "Port/PHY", \
+#define PHY_SELECT_DEF(def) \
+    {"phy", COMMAND_PARAM_TYPE_INT64, def, "Port/PHY", \
      PARAM_ALIASES({"A", "1"}, {"B", "2"}, {"AB", "3"}, {"none", "0"}, {"-", "0"}), \
      .irange = {0, 3}}
+
+#define PHY_SELECT PHY_SELECT_DEF(NULL)
 
 static const struct command_def command_list[] = {
     {"help", "List commands", cmd_help, {
@@ -1393,6 +1426,9 @@ static const struct command_def command_list[] = {
             "corrupt byte offset (0=preamble)",
             .irange = {0, UINT32_MAX}},
     }},
+    {"disrupt_stop", "Disable packet disruptor", cmd_disrupt_stop, {
+        PHY_SELECT_DEF("3"),
+    }},
     {"inject", "Packet injector", cmd_inject, {
         PHY_SELECT,
         {"data", COMMAND_PARAM_TYPE_STR, "",
@@ -1416,6 +1452,9 @@ static const struct command_def command_list[] = {
             "generate error at byte offset",
             PARAM_ALIASES({"disable", "-1"}),
             .irange = {-1, UINT32_MAX}},
+    }},
+    {"injector_stop", "Disable packet injector", cmd_inject_stop, {
+        PHY_SELECT_DEF("3"),
     }},
     {"hw_info", "Show hardware information", cmd_hw_info},
     {"reset_device_settings", "Reset settings stored on the device to defaults.",

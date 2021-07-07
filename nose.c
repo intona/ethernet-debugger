@@ -1450,21 +1450,30 @@ static int handle_firmware_update(struct nose_ctx *ctx)
 
             struct libusb_device_descriptor desc;
             if (!libusb_get_device_descriptor(list[n], &desc)) {
-                snprintf(ver, sizeof(ver), "%d.%02d", desc.bcdDevice >> 8,
-                         desc.bcdDevice & 0xFF);
+                char *comment = "";
+                if (desc.bcdDevice < fw_version)
+                    comment = " (outdated)";
+                snprintf(ver, sizeof(ver), "%d.%02d%s", desc.bcdDevice >> 8,
+                         desc.bcdDevice & 0xFF, comment);
             }
 
             LOG(ctx, "  %-8zd %-9s %-16s %-30s\n", n, devname, devserial, ver);
         }
         LOG(ctx, " -------------------------------------------------------\n");
-        LOG(ctx, "  a        Update all devices with outdated firmware\n");
-        LOG(ctx, "  b        Force update all devices (dangerous)\n");
-        LOG(ctx, "  c        Do nothing and exit\n");
-        LOG(ctx, " -------------------------------------------------------\n");
-        LOG(ctx, "\nEnter your choice (a number, or one of a, b, c): ");
+        if (last_valid) {
+            LOG(ctx, "  a        Update all devices with outdated firmware\n");
+            LOG(ctx, "  b        Force update all devices (dangerous)\n");
+            LOG(ctx, "  c        Do nothing and exit\n");
+            LOG(ctx, " -------------------------------------------------------\n");
+            LOG(ctx, "\nEnter your choice (a number, or one of a, b, c): ");
+        } else {
+            LOG(ctx, "\nNo devices found! Press enter to continue...\n");
+        }
         char input[80];
         if (!fgets(input, sizeof(input), stdin))
             input[0] = '\0';
+        if (!last_valid)
+            return 1;
         char *end;
         long num = strtol(input, &end, 10);
         if (end != input && end[0] == '\n' && num >= 0 && num < last_valid) {

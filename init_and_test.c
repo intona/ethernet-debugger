@@ -22,6 +22,13 @@
 // Wait this many seconds after a device reboot before trying to reopen.
 #define USB_REBOOT_WAIT_SECS 4
 
+static void report_error(int num)
+{
+    printf("Test failed! Error %d.\n", num);
+    fflush(NULL);
+    _Exit(num);
+}
+
 // Test packets that are just "garbage". Physically no problem.
 static const char testpkt1[8 + 64] = {
     0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0xD5,
@@ -222,23 +229,23 @@ void run_init_and_test(struct global *global, char *device, char *serial)
 
     if (!read_file("firmware.dat", &fw, &fw_size) && errno != ENOENT) {
         logline(log, "firmware.dat could not be read.\n");
-        _Exit(21);
+        report_error(21);
     }
 
     if (fw) {
         if (!read_file("fsbl.img", &fsbl, &fsbl_size)) {
             logline(log, "fsbl.img not found.\n");
-            _Exit(21);
+            report_error(21);
         }
 
         if (!fw_verify(log, fw, fw_size)) {
             logline(log, "firmware.dat is broken.\n");
-            _Exit(21);
+            report_error(21);
         }
 
         if (fsbl_size < 16 || memcmp(fsbl, "CY", 2) != 0) {
             logline(log, "fsbl.img is broken.\n");
-            _Exit(21);
+            report_error(21);
         }
 
         // Any cypress device? Switch to our own bootloader to access the flash.
@@ -249,7 +256,7 @@ void run_init_and_test(struct global *global, char *device, char *serial)
             //     from flash when it got loaded.
             if (!usb_program_cyboot(usbdev, log, fsbl, fsbl_size)) {
                 logline(log, "Failed to program FSBL.\n");
-                _Exit(17);
+                report_error(17);
             }
             libusb_close(usbdev);
 
@@ -263,13 +270,13 @@ void run_init_and_test(struct global *global, char *device, char *serial)
         if (usbdev) {
             if (!usb_set_flash_protection(usbdev, log, 0, 0)) {
                 logline(log, "Failed to un-protect flash.\n");
-                _Exit(19);
+                report_error(19);
             }
 
             // (If the FSBL was already on the flash, update it.)
             if (!usb_write_flash(usbdev, log, 0, fsbl, fsbl_size)) {
                 logline(log, "Failed to flash FSBL.\n");
-                _Exit(19);
+                report_error(19);
             }
 
             if (!usb_write_flash(usbdev, log, FW_BASE_ADDRESS_0 + FW_HEADER_OFFSET,
@@ -278,12 +285,12 @@ void run_init_and_test(struct global *global, char *device, char *serial)
                                  fw, fw_size))
             {
                 logline(log, "Failed to flash main FW.\n");
-                _Exit(19);
+                report_error(19);
             }
 
             if (!usb_set_flash_protection(usbdev, log, 0, FW_BASE_ADDRESS_1)) {
                 logline(log, "Failed to protect flash.\n");
-                _Exit(19);
+                report_error(19);
             }
 
             if (serial && serial[0]) {
@@ -294,7 +301,7 @@ void run_init_and_test(struct global *global, char *device, char *serial)
 
             // Make it boot the actual firmware.
             if (!usb_reboot(usbdev, log))
-                _Exit(20);
+                report_error(20);
 
             libusb_close(usbdev);
 
@@ -304,20 +311,20 @@ void run_init_and_test(struct global *global, char *device, char *serial)
 
     struct device *dev = device_open(global, device);
     if (!dev)
-        _Exit(1);
+        report_error(1);
 
     if (dev->fw_version >= 0x106) {
         printf("Checking EEPROM...\n");
 
         if (!eeprom_access(dev, true, 13, "hello world", 11))
-            _Exit(14);
+            report_error(14);
         if (!eeprom_access(dev, true, 24, "blarrrgh", 8))
-            _Exit(14);
+            report_error(14);
         char buf[17];
         if (!eeprom_access(dev, false, 15, buf, 17))
-            _Exit(14);
+            report_error(14);
         if (memcmp(buf, "llo worldblarrrgh", 17))
-            _Exit(15);
+            report_error(15);
 
         // send reset command (clears and initializes EEPROM)
         uint32_t cmd = (7 << 24);
@@ -325,13 +332,13 @@ void run_init_and_test(struct global *global, char *device, char *serial)
         size_t res_num = 0;
         int r = device_config_raw(dev, &cmd, 1, &res, &res_num);
         if (r < 0 || res_num < 2 || (res[1] & 0xFF))
-            _Exit(16);
+            report_error(16);
         free(res);
 
         if (!eeprom_access(dev, false, 0x63A, buf, 8))
-            _Exit(14);
+            report_error(14);
         if (memcmp(buf, &(uint64_t){(uint64_t)-1}, 8))
-            _Exit(15);
+            report_error(15);
     }
 
     logline(log, "Checking mdio...\n");
@@ -339,22 +346,22 @@ void run_init_and_test(struct global *global, char *device, char *serial)
     // Test mdio: test register 17_24, because it can take arbitrary 16 bit data
     device_cfg_lock(dev);
     if (device_mdio_write(dev, DEV_PORT_ALL, 22, 17) < 0)
-        _Exit(2);
+        report_error(2);
     if (device_mdio_write(dev, DEV_PORT_A, 24, 0xABCD) < 0)
-        _Exit(2);
+        report_error(2);
     if (device_mdio_write(dev, DEV_PORT_B, 24, 0x1234) < 0)
-        _Exit(2);
+        report_error(2);
     int regs[2];
     if (device_mdio_read_both(dev, 24, regs) < 0)
-        _Exit(3);
+        report_error(3);
     if (regs[0] != 0xABCD || regs[1] != 0x1234)
-        _Exit(4);
+        report_error(4);
     if (device_mdio_write(dev, DEV_PORT_ALL, 24, 0xF0BA) < 0)
-        _Exit(2);
+        report_error(2);
     if (device_mdio_read_both(dev, 24, regs) < 0)
-        _Exit(3);
+        report_error(3);
     if (regs[0] != 0xF0BA || regs[1] != 0xF0BA)
-        _Exit(4);
+        report_error(4);
     device_cfg_unlock(dev);
 
     logline(log, "Configure disrupt...\n");
@@ -366,7 +373,7 @@ void run_init_and_test(struct global *global, char *device, char *serial)
         .mode = DEVICE_DISRUPT_DROP,
     };
     if (device_disrupt_pkt(log, dev, 3u, &dp) < 0)
-        _Exit(8);
+        report_error(8);
 
     logline(log, "Starting capture, discarding input...\n");
 
@@ -388,7 +395,7 @@ void run_init_and_test(struct global *global, char *device, char *serial)
     };
     grabber_start(global, &grab_opts);
     if (!dev->grabber)
-        _Exit(9);
+        report_error(9);
 
     // Ignore whatever was still stuck in the pipes from previous run.
     sleep(1);
@@ -419,7 +426,7 @@ void run_init_and_test(struct global *global, char *device, char *serial)
             // Inject through opposite port.
             size_t otherport = !port;
             if (device_inject_pkt(log, dev, 1 << otherport, &params) < 0)
-                _Exit(10);
+                report_error(10);
 
             sleep(1);
 
@@ -428,15 +435,15 @@ void run_init_and_test(struct global *global, char *device, char *serial)
         }
 
         if (test_ctx.encountered_notok)
-            _Exit(11);
+            report_error(11);
         if (!test_ctx.encountered_ok)
-            _Exit(12);
+            report_error(12);
     }
 
     // Disable disruptor
     dp.num_packets = 0;
     if (device_disrupt_pkt(log, dev, 3u, &dp) < 0)
-        _Exit(13);
+        report_error(13);
 
     printf("Checking serial number...\n");
 
@@ -452,9 +459,10 @@ void run_init_and_test(struct global *global, char *device, char *serial)
 
     if (serial && serial[0] && strcmp(serial, devserial) != 0) {
         logline(log, "All OK, but serial number is not correct.\n");
-        _Exit(33);
+        report_error(33);
     }
 
     logline(log, "All OK.\n");
+    fflush(NULL);
     _Exit(32);
 }

@@ -39,6 +39,11 @@
 #include <knownfolders.h>
 #endif
 
+#if HAVE_READLINE
+#include <readline/readline.h>
+#include <readline/history.h>
+#endif
+
 #ifndef SIZE_MAX
 #define SIZE_MAX ((size_t)-1)
 #endif
@@ -198,6 +203,12 @@ struct nose_ctx {
     uint64_t last_link_up_time[2]; // in get_time_us()
     uint64_t last_link_down_time[2]; // in get_time_us()
     uint64_t num_link_changes[2];
+#if HAVE_READLINE
+    char readline_buf[10];
+    size_t readline_buf_size;
+    char histfile[80];
+#endif
+    struct pipe *rl_pipe;
 };
 
 struct client {
@@ -207,6 +218,145 @@ struct client {
 };
 
 #define MAX_LOG_RECORD 512
+
+static void process_command(struct nose_ctx *ctx, char *cmd, struct pipe *p);
+
+#if HAVE_READLINE
+
+static struct nose_ctx *cb_rl_nose_ctx;
+static bool rl_in_handler;
+
+static int cb_rl_input_available_hook(void)
+{
+    struct nose_ctx *ctx = cb_rl_nose_ctx;
+    return ctx && ctx->readline_buf_size > 0;
+}
+
+static int cb_rl_getc_function(FILE *f)
+{
+    struct nose_ctx *ctx = cb_rl_nose_ctx;
+    if (!ctx || !ctx->readline_buf_size)
+        return EOF;
+    unsigned char r = ctx->readline_buf[0];
+    memmove(ctx->readline_buf, ctx->readline_buf + 1, ctx->readline_buf_size - 1);
+    ctx->readline_buf_size -= 1;
+    return r;
+}
+
+static void cb_rl_handler(char *line)
+{
+    struct nose_ctx *ctx = cb_rl_nose_ctx;
+    if (ctx && line) {
+        if (line[strspn(line, " \t\n\r")])
+            add_history(line);
+        rl_in_handler = true; // prevent redrawing the current input line
+        process_command(ctx, line, ctx->rl_pipe);
+        rl_in_handler = false;
+    }
+    free(line);
+}
+
+static void init_readline(struct nose_ctx *ctx, struct pipe *p)
+{
+    if (cb_rl_nose_ctx)
+        return;
+
+    cb_rl_nose_ctx = ctx;
+
+    ctx->rl_pipe = p;
+
+    rl_catch_signals = 0;
+    // do not allow readline to freely corrupt memory
+    rl_change_environment = 0;
+
+    rl_input_available_hook = cb_rl_input_available_hook;
+    rl_getc_function = cb_rl_getc_function;
+    rl_callback_handler_install("> ", cb_rl_handler);
+
+    rl_initialize();
+    using_history();
+    stifle_history(200);
+
+#if HAVE_POSIX
+    char *home = getenv("HOME");
+    if (home)
+        snprintf(ctx->histfile, sizeof(ctx->histfile), "%s/.nose_hist", home);
+#endif
+
+    if (ctx->histfile[0])
+        read_history(ctx->histfile);
+
+    // Make history navigation work as expected after initialization. No idea
+    // why the API forces us to do this.
+    history_set_pos(history_length);
+
+    // This fixes readline showing strange behavior after init (if no other
+    // lines are printed through nose's logging).
+    rl_clear_visible_line();
+    rl_forced_update_display();
+}
+
+static void uninit_readline(struct nose_ctx *ctx, struct pipe *p)
+{
+    if (ctx->rl_pipe == p) {
+        rl_clear_visible_line();
+        rl_callback_handler_remove();
+        ctx->rl_pipe = NULL;
+        cb_rl_nose_ctx = NULL;
+
+        if (ctx->histfile[0])
+            write_history(ctx->histfile);
+    }
+}
+
+static void work_readline(struct nose_ctx *ctx)
+{
+    if (!ctx->rl_pipe)
+        return;
+
+    while (1) {
+        // Drain readline buffer.
+        while (ctx->readline_buf_size)
+            rl_callback_read_char();
+        // Drain pipe buffer.
+        ctx->readline_buf_size =
+            pipe_read(ctx->rl_pipe, ctx->readline_buf, sizeof(ctx->readline_buf));
+        if (!ctx->readline_buf_size)
+            break;
+    }
+}
+
+static void hide_readline(struct nose_ctx *ctx, bool hide)
+{
+    if (!cb_rl_nose_ctx)
+        return;
+
+    if (hide) {
+        rl_clear_visible_line();
+    } else if (!rl_in_handler) {
+        rl_forced_update_display();
+    }
+}
+
+#else /* HAVE_READLINE */
+
+static void init_readline(struct nose_ctx *ctx, struct pipe *p)
+{
+}
+
+static void uninit_readline(struct nose_ctx *ctx, struct pipe *p)
+{
+}
+
+static void work_readline(struct nose_ctx *ctx)
+{
+}
+
+static void hide_readline(struct nose_ctx *ctx, bool hide)
+{
+}
+
+#endif
 
 static void log_write_lev(void *pctx, const char *fmt, va_list va, int lev)
 {
@@ -218,6 +368,7 @@ static void log_write_lev(void *pctx, const char *fmt, va_list va, int lev)
         return;
 
     if (!ctx->log_indirect) {
+        hide_readline(ctx, true);
         // Prettify output that is using \r somewhat: if the previous log line
         // ended in \r, but the new one does not, then insert an additional \n
         // before the new line. (Except if the entire line is "\n".)
@@ -237,6 +388,7 @@ static void log_write_lev(void *pctx, const char *fmt, va_list va, int lev)
         }
         printf("%s", buf);
         fflush(stdout);
+        hide_readline(ctx, false);
     }
 
     // Split by lines, because it's convenient.
@@ -306,9 +458,11 @@ static void flush_log(struct nose_ctx *ctx)
         buf[tlen + 1] = '\0';
 
         if (ctx->log_indirect && !ctx->mute_terminal) {
+            hide_readline(ctx, true);
             FILE *f = ctx->extcap_active ? stderr : stdout;
             fprintf(f, "%s", buf);
             fflush(f);
+            hide_readline(ctx, false);
         }
 
         for (size_t n = 0; n < ctx->num_clients; n++) {
@@ -1222,22 +1376,26 @@ static void on_ipc_client_event(void *ud, struct pipe *p, unsigned events)
     assert(cl);
 
     if (events & PIPE_EVENT_NEW_DATA) {
-        while (1) {
-            char line[4096];
-            void *buf;
-            size_t size;
-            pipe_peek(p, &buf, &size);
-            char *nl = memchr(buf, '\n', size);
-            if (!nl) {
-                if (size >= sizeof(line))
-                    pipe_read(p, NULL, size);
-                pipe_read_more(p);
-                break;
+        if (p == ctx->rl_pipe) {
+            work_readline(ctx);
+        } else {
+            while (1) {
+                char line[4096];
+                void *buf;
+                size_t size;
+                pipe_peek(p, &buf, &size);
+                char *nl = memchr(buf, '\n', size);
+                if (!nl) {
+                    if (size >= sizeof(line))
+                        pipe_read(p, NULL, size);
+                    pipe_read_more(p);
+                    break;
+                }
+                int len = nl - (char *)buf;
+                snprintf(line, sizeof(line), "%.*s", len, (char *)buf);
+                pipe_read(p, NULL, len + 1);
+                process_command(ctx, line, cl->is_terminal ? NULL : p);
             }
-            int len = nl - (char *)buf;
-            snprintf(line, sizeof(line), "%.*s", len, (char *)buf);
-            pipe_read(p, NULL, len + 1);
-            process_command(ctx, line, cl->is_terminal ? NULL : p);
         }
     }
 
@@ -1251,6 +1409,7 @@ static void on_ipc_client_event(void *ud, struct pipe *p, unsigned events)
                 break;
             }
         }
+        uninit_readline(ctx, p);
         pipe_drain_destroy(p);
         free(cl);
     }
@@ -1272,6 +1431,9 @@ static struct client *add_client(struct nose_ctx *ctx, struct pipe *p,
     ctx->clients[ctx->num_clients++] = cl;
 
     pipe_set_on_event(cl->conn, ctx, on_ipc_client_event);
+
+    if (pipe_isatty(cl->conn) && cl->is_terminal)
+        init_readline(ctx, cl->conn);
 
     return cl;
 }
@@ -1969,6 +2131,7 @@ static void on_terminate(void *ud, struct event_loop *ev)
 
     for (size_t n = 0; n < ctx->num_clients; n++) {
         struct client *cl = ctx->clients[n];
+        uninit_readline(ctx, cl->conn);
         pipe_destroy(cl->conn);
         free(cl);
     }
@@ -2025,6 +2188,11 @@ int main(int argc, char **argv)
 
     if (ctx->opts.print_version) {
         printf("Version: %s\n", version);
+        printf("Optional features:");
+#if HAVE_READLINE
+        printf(" libreadline");
+#endif
+        printf("\n");
         exit(0);
     }
 

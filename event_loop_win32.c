@@ -383,7 +383,11 @@ bool os_pipe_init(struct os_pipe *p)
             return false;
         }
     } else if (strcmp(p->filename, "/dev/stdout") == 0) {
-        p->handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+        // Call a random simple console API to check whether it's a console.
+        if (!GetConsoleMode(h, &(DWORD){0}))
+            return false; // probably not a console, refuse function
+        p->handle = h;
         p->io_mode = IO_DIRECT; // just assume it's essentially non-blocking
         p->close_handle = false;
     } else {
@@ -406,6 +410,11 @@ bool os_pipe_init(struct os_pipe *p)
         return false;
 
     return true;
+}
+
+bool os_pipe_isatty(struct os_pipe *p)
+{
+    return p->io_mode == IO_CON_IN;
 }
 
 bool os_pipe_init_client(struct os_pipe *p, struct os_pipe *server)

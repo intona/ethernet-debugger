@@ -117,4 +117,6 @@ void os_pipe_destroy(struct os_pipe *p);
 size_t os_pipe_read(struct os_pipe *p, void *buf, size_t buf_size);
 size_t os_pipe_write(struct os_pipe *p, void *buf, size_t buf_size);
 
+bool os_pipe_isatty(struct os_pipe *p);
+
 #endif

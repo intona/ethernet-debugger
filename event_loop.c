@@ -684,3 +684,8 @@ bool pipe_get_all_written(struct pipe *p)
 {
     return !p->write_buf.size;
 }
+
+bool pipe_isatty(struct pipe *p)
+{
+    return os_pipe_isatty(&p->os);
+}

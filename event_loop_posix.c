@@ -273,6 +273,11 @@ size_t os_pipe_write(struct os_pipe *p, void *buf, size_t buf_size)
     return r;
 }
 
+bool os_pipe_isatty(struct os_pipe *p)
+{
+    return isatty(p->fd);
+}
+
 char *pipe_format_pipe_path(const char *name)
 {
     return xasprintf("/tmp/%s.socket", name);

@@ -35,7 +35,7 @@ Requirements:
 The following command should be sufficient to install the dependencies on
 Ubuntu::
 
-    sudo apt install build-essential meson libusb-1.0-0-dev
+    sudo apt install build-essential meson libusb-1.0-0-dev libreadline-dev
 
 At least Ubuntu 18.04 and later should work. The only real restriction is the
 version of the libusb API provided, and whether the meson package is recent

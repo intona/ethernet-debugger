@@ -196,6 +196,10 @@ bool pipe_write(struct pipe *p, void *buf, size_t buf_size);
 // control.
 bool pipe_get_all_written(struct pipe *p);
 
+// Call istty() or equivalent on the underlying OS handle.
+// errno is always invalid after this call.
+bool pipe_isatty(struct pipe *p);
+
 // Returns non-NULL if PIPE_EVENT_NEW_CLIENT event was flagged. May still return
 // NULL otherwise, e.g. if there was an error on creating the new client handle.
 // The caller owns the new pipe object, and is responsible for destroying it,

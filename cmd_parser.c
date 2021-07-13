@@ -119,7 +119,18 @@ static bool parse_value(struct logfn log, const char *name,
 {
     struct json_tok tmp;
 
-    if (el && el->type == JSON_TYPE_STRING && def->aliases) {
+    if (!el && def->def) {
+        tmp.type = JSON_TYPE_STRING;
+        tmp.u.str = (char *)def->def;
+        el = &tmp;
+    }
+
+    if (!el) {
+        logline(log, "error: %s is required.\n", name);
+        return false;
+    }
+
+    if (el->type == JSON_TYPE_STRING && def->aliases) {
         for (size_t n = 0; def->aliases[n].user_val; n++) {
             if (strcasecmp(el->u.str, def->aliases[n].user_val) == 0) {
                 tmp = (struct json_tok){
@@ -130,17 +141,6 @@ static bool parse_value(struct logfn log, const char *name,
                 break;
             }
         }
-    }
-
-    if (!el && def->def) {
-        tmp.type = JSON_TYPE_STRING;
-        tmp.u.str = (char *)def->def;
-        el = &tmp;
-    }
-
-    if (!el) {
-        logline(log, "error: %s is required.\n", name);
-        return false;
     }
 
     *data = (struct command_param){ .def = def };

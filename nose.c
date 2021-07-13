@@ -1589,7 +1589,7 @@ static const struct command_def command_list[] = {
             .irange = {0, UINT32_MAX}},
     }},
     {"disrupt_stop", "Disable packet disruptor", cmd_disrupt_stop, {
-        PHY_SELECT_DEF("3"),
+        PHY_SELECT_DEF("AB"),
     }},
     {"inject", "Packet injector", cmd_inject, {
         PHY_SELECT,
@@ -1616,7 +1616,7 @@ static const struct command_def command_list[] = {
             .irange = {-1, UINT32_MAX}},
     }},
     {"injector_stop", "Disable packet injector", cmd_inject_stop, {
-        PHY_SELECT_DEF("3"),
+        PHY_SELECT_DEF("AB"),
     }},
     {"hw_info", "Show hardware information", cmd_hw_info},
     {"reset_device_settings", "Reset settings stored on the device to defaults.",

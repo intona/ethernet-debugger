@@ -1622,7 +1622,7 @@ static const struct command_def command_list[] = {
             PARAM_ALIASES({"disable", "-1"}),
             .irange = {-1, UINT32_MAX}},
     }},
-    {"injector_stop", "Disable packet injector", cmd_inject_stop, {
+    {"inject_stop", "Disable packet injector", cmd_inject_stop, {
         PHY_SELECT_DEF("AB"),
     }},
     {"hw_info", "Show hardware information", cmd_hw_info},

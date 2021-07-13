@@ -124,6 +124,24 @@ struct device_disrupt_params {
 int device_disrupt_pkt(struct logfn logfn, struct device *dev, unsigned ports,
                        const struct device_disrupt_params *params);
 
+// Various per-port state, whatever I happened to need.
+struct device_port_state {
+    uint32_t inject_active;     // # packets still to inject (UINT32_MAX = inf)
+    uint32_t inject_count;      // # packets injected (mod 2^32)
+    uint32_t inject_dropped;    // # packets dropped because injection was active
+    uint32_t disrupt_active;    // # packets still to disrupt (UINT32_MAX = inf)
+    uint32_t disrupt_affected;  // # packets that got disrupted (mod 2^32)
+};
+
+// Read some packet disruptor state.
+//  logfn: for error messages
+//  dev: target device
+//  port: DEV_PORT_A or DEV_PORT_B (not a bit mask)
+//  state: overwritten with results on success
+//  returns: ==0: success, <0: error code
+int device_get_port_state(struct logfn logfn, struct device *dev, unsigned port,
+                          struct device_port_state *state);
+
 enum {
     // Speed mode (see code)
     DEVICE_SETTING_SPEED_MODE       = 1,

@@ -1208,6 +1208,10 @@ static void cmd_inject_stop(struct command_ctx *cctx, struct command_param *para
     cctx->success = device_inject_pkt(cctx->log, dev, ports, &p) >= 0;
 }
 
+// Going by the convention used with certain hardware registers.
+#define NUM32_OR_INF(i) \
+    ((i) == UINT32_MAX ? "inf" : stack_sprintf(40, "%"PRIu32, i))
+
 static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
                         size_t num_params)
 {
@@ -1290,6 +1294,44 @@ static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
             snprintf(delay, sizeof(delay), "%"PRIu32" ms", phy_wait);
         }
         LOG(cctx, "    PHY auto-negotiation wait delay: %s\n", delay);
+    }
+
+    if (dev->fw_version >= 0x106) {
+        LOG(cctx, "Runtime state:\n");
+
+        for (int port = DEV_PORT_A; port <= DEV_PORT_B; port++) {
+            struct device_port_state state;
+
+            LOG(cctx, "  Port %s:\n", port_names[port]);
+
+            if (device_get_port_state(cctx->log, dev, port, &state) < 0) {
+                LOG(cctx, "    error: could not retrieve state\n");
+                continue;
+            }
+
+            if (state.inject_active) {
+                LOG(cctx, "    Injector packets to inject: %s\n",
+                    NUM32_OR_INF(state.inject_active));
+            } else {
+                LOG(cctx, "    Injector inactive.\n");
+            }
+
+            LOG(cctx, "    Injector inserted packets (mod 2^32): %"PRIu32"\n",
+                state.inject_count);
+
+            LOG(cctx, "    Injector-dropped packets (mod 2^32): %"PRIu32"\n",
+                state.inject_dropped);
+
+            if (state.disrupt_active) {
+                LOG(cctx, "    Disruptor packets to fry: %s\n",
+                    NUM32_OR_INF(state.disrupt_active));
+            } else {
+                LOG(cctx, "    Disruptor inactive.\n");
+            }
+
+            LOG(cctx, "    Disruptor packets fried (mod 2^32): %"PRIu32"\n",
+                state.disrupt_affected);
+        }
     }
 }
 

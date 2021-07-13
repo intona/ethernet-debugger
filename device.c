@@ -872,6 +872,39 @@ error:
     return -1;
 }
 
+int device_get_port_state(struct logfn logfn, struct device *dev, unsigned port,
+                          struct device_port_state *state)
+{
+    if ((port != DEV_PORT_A && port != DEV_PORT_B) || dev->fw_version < 0x106)
+        return -1;
+
+    int portidx = port - 1;
+    int ret = -1;
+    device_cfg_lock(dev);
+
+    uint32_t reg_base = (2 + portidx) << 20;
+    uint32_t regs[4];
+    if (!regs_read(logfn, dev, reg_base + 32, regs, 4))
+        goto error;
+
+    bool inj_active = regs[0];
+    state->inject_active = inj_active ? regs[2] : 0;
+    state->inject_count = regs[1];
+    state->inject_dropped = regs[3];
+
+    reg_base = (4 + portidx) << 20;
+    if (!regs_read(logfn, dev, reg_base + 32, regs, 2))
+        goto error;
+
+    state->disrupt_active = regs[1];
+    state->disrupt_affected = regs[0];
+
+    ret = 0;
+error:
+    device_cfg_unlock(dev);
+    return ret;
+}
+
 int device_setting_read(struct logfn logfn, struct device *dev, uint32_t id,
                         uint32_t *out_val)
 {

@@ -738,6 +738,11 @@ static void on_grabber_status_timer(void *ud, struct timer *t)
 
     assert(ctx->usb_dev->grabber);
 
+    // If extcap is active, "ping" Wireshark regularly to check whether it's
+    // still alive. There is no dedicated ping command, but appending an empty
+    // string to the log will have the same effect.
+    log_extcap(ctx, "");
+
     struct grabber_status st;
     grabber_read_status(ctx->usb_dev->grabber, &st);
 
@@ -1531,6 +1536,8 @@ static void on_extcap_ctrl_out(void *ud, struct pipe *p, unsigned events)
     if (events & PIPE_EVENT_CLOSED_WRITE) {
         pipe_destroy(p);
         ctx->extcap_ctrl_out = NULL;
+
+        grab_stop(ctx);
     }
 }
 

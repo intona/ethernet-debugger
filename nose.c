@@ -1678,7 +1678,7 @@ static const struct command_def command_list[] = {
     {"cfg_packet", "Write raw config command packet", cmd_cfg_packet, {
         {"data", COMMAND_PARAM_TYPE_STR, NULL,
             "hex: 0x... 0x.. words, ABCD bytes"}, }},
-    {"blink_led", "Cause the main LED to blue for a moment.", cmd_identify },
+    {"blink_led", "Cause the main LED to blink for a moment.", cmd_identify },
     {"set", "Set a command line option.", cmd_set, {
         {"name", COMMAND_PARAM_TYPE_STR, NULL, "option name, without '--'"},
         {"value", COMMAND_PARAM_TYPE_JSON, NULL, "new option value"}, }},

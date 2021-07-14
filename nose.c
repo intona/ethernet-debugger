@@ -247,8 +247,13 @@ static void cb_rl_handler(char *line)
 {
     struct nose_ctx *ctx = cb_rl_nose_ctx;
     if (ctx && line) {
-        if (line[strspn(line, " \t\n\r")])
-            add_history(line);
+        // Do not add empty or duplicate lines to history.
+        if (line[strspn(line, " \t\n\r")]) {
+            HIST_ENTRY *prev = history_get(history_base + history_length - 1);
+            if (!prev || strcmp(prev->line, line))
+                add_history(line);
+        }
+
         rl_in_handler = true; // prevent redrawing the current input line
         process_command(ctx, line, ctx->rl_pipe);
         rl_in_handler = false;

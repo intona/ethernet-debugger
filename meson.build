@@ -57,7 +57,7 @@ else
     cflags += ['-DHAVE_READLINE=0']
 endif
 
-sources += vcs_tag(command: ['git', 'describe', '--always'],
+sources += vcs_tag(command: ['git', 'describe', '--always', '--tags'],
                    fallback: '<unknown>',
                    input: 'version.c.in',
                    output: 'version.c')

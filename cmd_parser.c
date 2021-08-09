@@ -455,13 +455,30 @@ static const char *get_type_help(const struct command_param_def *def)
     return "?";
 }
 
+static int cmd_cmp(const void *pa, const void *pb)
+{
+    const struct command_def *a = pa;
+    const struct command_def *b = pb;
+    return strcmp(a->name, b->name);
+}
+
 void command_list_help(const struct command_def *cmds, struct logfn lfn,
                        const char *filter, bool filter_exact)
 {
     bool use_filter = false, any_matches = false;
 
-    for (size_t c = 0; cmds[c].name; c++) {
-        const struct command_def *cmd_def = &cmds[c];
+    size_t num_cmds = 0;
+    for (size_t c = 0; cmds[c].name; c++)
+        num_cmds++;
+    struct command_def *scmds = NULL;
+    XEXTEND_ARRAY(scmds, 0, num_cmds + 1);
+    memcpy(scmds, cmds, (num_cmds + 1) * sizeof(scmds[0]));
+    scmds[0] = cmds[0];
+    scmds[1] = cmds[1];
+    qsort(scmds, num_cmds, sizeof(scmds[0]), cmd_cmp);
+
+    for (size_t c = 0; scmds[c].name; c++) {
+        const struct command_def *cmd_def = &scmds[c];
 
         if (filter && filter[0] && strcasecmp(filter, "all") != 0) {
             if (!use_filter && !filter_exact)
@@ -519,6 +536,8 @@ void command_list_help(const struct command_def *cmds, struct logfn lfn,
         logline(lfn, "interpreting '--something...' as option name.\n");
         logline(lfn, "Or: {\"command\":\"cmd-name\",\"paramname1\":\"paramvalue1\", ...}\n");
     }
+
+    free(scmds);
 }
 
 static void set_cmd_def_from_opt_def(struct command_param_def *dst,

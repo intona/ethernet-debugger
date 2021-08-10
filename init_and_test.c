@@ -267,6 +267,12 @@ void run_init_and_test(struct global *global, char *device, char *serial)
         // Any FSBL-only device?
         usbdev = open_device_with_vid_pid(usbctx, FW_USB_FSBL_VID,
                                           FW_USB_FSBL_PID, device);
+        // If not, try to reprogram a device.
+        if (!usbdev) {
+            usbdev = open_device_with_vid_pid(usbctx, FW_USB_MAIN_VID,
+                                              FW_USB_MAIN_PID, device);
+        }
+
         if (usbdev) {
             if (!usb_set_flash_protection(usbdev, log, 0, 0)) {
                 logline(log, "Failed to un-protect flash.\n");

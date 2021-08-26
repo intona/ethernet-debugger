@@ -36,17 +36,7 @@ static char map_escape(char r)
     return 0;
 }
 
-struct wordbound {
-    // a is the first char of the word, b the first char _after_ it.
-    size_t a, b;
-};
-
-// Split on spaces, but also interpret quotes (") and escapes (\...).
-// Somewhat reminiscent of shell.
-// If bounds!=NULL, then set this to an array that has count entries, where
-// count is the number of returned words. Each entry is set to the bounds of
-// the word at the given index (including quotes, excluding whitespace).
-static char **split_spaces_with_quotes(const char *s, struct wordbound **bounds)
+char **split_spaces_with_quotes(const char *s, struct wordbound **bounds)
 {
     const char *start = s;
     struct wordbound *rbounds = NULL;

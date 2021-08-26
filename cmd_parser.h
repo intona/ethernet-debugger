@@ -170,4 +170,16 @@ void options_free(const struct option_def *opts, void *target);
 // NULL string fields to "".
 void options_init_allocs(const struct option_def *opts, void *target);
 
+struct wordbound {
+    // a is the first char of the word, b the first char _after_ it.
+    size_t a, b;
+};
+
+// Split on spaces, but also interpret quotes (") and escapes (\...).
+// Somewhat reminiscent of shell, used by the command parser.
+// If bounds!=NULL, then set this to an array that has count entries, where
+// count is the number of returned words. Each entry is set to the bounds of
+// the word at the given index (including quotes, excluding whitespace).
+char **split_spaces_with_quotes(const char *s, struct wordbound **bounds);
+
 #endif

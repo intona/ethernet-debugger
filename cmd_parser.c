@@ -560,6 +560,11 @@ char **command_completer(const struct command_def *cmds, void *ctx,
         }
     }
 
+    for (size_t n = 0; words[n]; n++)
+        free(words[n]);
+    free(words);
+    free(bounds);
+
     return res;
 }
 

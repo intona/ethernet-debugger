@@ -11,6 +11,8 @@
 #include "json_out.h"
 #include "utils.h"
 
+static const char spaces[] = " \t\n\r";
+
 static void json_log(void *opaque, size_t loc, const char *msg)
 {
     struct logfn lfn = *(struct logfn *)opaque;
@@ -34,12 +36,20 @@ static char map_escape(char r)
     return 0;
 }
 
+struct wordbound {
+    // a is the first char of the word, b the first char _after_ it.
+    size_t a, b;
+};
+
 // Split on spaces, but also interpret quotes (") and escapes (\...).
 // Somewhat reminiscent of shell.
-static char **split_spaces_with_quotes(const char *s)
+// If bounds!=NULL, then set this to an array that has count entries, where
+// count is the number of returned words. Each entry is set to the bounds of
+// the word at the given index (including quotes, excluding whitespace).
+static char **split_spaces_with_quotes(const char *s, struct wordbound **bounds)
 {
-    static const char spaces[] = " \t\n\r";
-
+    const char *start = s;
+    struct wordbound *rbounds = NULL;
     char **res = NULL;
     size_t res_n = 0;
     char *tmp = malloc(strlen(s) + 1); // worst case work buffer
@@ -55,6 +65,7 @@ static char **split_spaces_with_quotes(const char *s)
 
         size_t len = 0;
         char quote = 0;
+        size_t a = s - start;
 
         while (s[0]) {
             if (s[0] == quote) {
@@ -88,6 +99,13 @@ static char **split_spaces_with_quotes(const char *s)
             goto fail;
         }
         res[res_n++] = word;
+
+        if (bounds) {
+            if (!EXTEND_ARRAY(rbounds, res_n, 1))
+                goto fail;
+            size_t b = s - start;
+            rbounds[res_n - 1] = (struct wordbound){a, b};
+        }
     } while (s[0]);
 
     // terminating NULL
@@ -96,6 +114,8 @@ static char **split_spaces_with_quotes(const char *s)
     res[res_n++] = NULL;
 
     free(tmp);
+    if (bounds)
+        *bounds = rbounds;
     return res;
 
 fail:
@@ -103,6 +123,7 @@ fail:
         free(res[n]);
     free(res);
     free(tmp);
+    free(rbounds);
     return NULL;
 }
 
@@ -271,7 +292,7 @@ void command_dispatch(const struct command_def *cmds, struct command_ctx *ctx,
 
         jcmd = obj;
     } else {
-        args = split_spaces_with_quotes(cmd);
+        args = split_spaces_with_quotes(cmd, NULL);
         cmdname = args ? args[0] : NULL;
         ctx->jout = NULL;
     }

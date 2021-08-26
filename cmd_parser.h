@@ -58,6 +58,9 @@ struct command_param_def {
     // Use PARAM_ALIASES to set this (it also terminates the array correctly).
     const struct command_alias_val *aliases;
     struct command_i64_range irange; // for COMMAND_PARAM_TYPE_INT64[_S]
+    // Optional completer function. Returns NULL-terminated array of strings
+    // (each malloced) of possible parameter values.
+    char **(*completer)(void *ctx);
 };
 
 #define PARAM_ALIASES(...) \
@@ -99,6 +102,21 @@ void command_dispatch(const struct command_def *cmds, struct command_ctx *ctx,
 // cmds is like in command_dispatch.
 void command_list_help(const struct command_def *cmds, struct logfn lfn,
                        const char *filter, bool filter_exact);
+
+// Return an auto-completion match at text[pos]. The return value is a malloc()
+// allocated array with malloc allocated strings (terminated by a NULL entry),
+// which can replace the word at pos, or NULL if there's no match.
+// Note: this does approximate parsing only, which makes it less accurate, but
+// also simpler and more robust.
+//  cmds: command list, like in command_dispatch()
+//  ctx: opaque context for command_param_def.completer()
+//  text: current user text
+//  pos: index into text, cursor position where to provide completion matches
+//  start: output only, set to start of the current word
+//  end: output only, set to end of the current word (index of char after word)
+//  returns: malloced array (owned by caller), or NULL
+char **command_completer(const struct command_def *cmds, void *ctx,
+                         const char *text, int pos, int *start, int *end);
 
 struct option_def {
     const char *name;

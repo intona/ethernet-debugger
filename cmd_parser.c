@@ -458,10 +458,123 @@ done:
     free(args);
 }
 
+static void do_append(char ***res, size_t *num_res, char *word, const char *s)
+{
+    if (!s || !str_starts_with(s, word, NULL))
+        return;
+
+    XEXTEND_ARRAY(*res, *num_res, 2);
+    (*res)[*num_res] = xstrdup(s);
+    (*num_res)++;
+    (*res)[*num_res] = NULL;
+}
+// If C weren't so absolutely awful, this could just be a nested function with
+// no macro trickery.
+#define append(s) do_append(&res, &num_res, word, s)
+
+char **command_completer(const struct command_def *cmds, void *ctx,
+                         const char *text, int pos, int *start, int *end)
+{
+    char **res = NULL;
+    size_t num_res = 0;
+    struct wordbound *bounds;
+    char **words = split_spaces_with_quotes(text, &bounds);
+    if (!words)
+        return NULL;
+
+    int word_index = -1;
+    size_t count = 0;
+    for (size_t n = 0; words[n]; n++) {
+        if (pos >= bounds[n].a)
+            word_index = n;
+        count = n + 1;
+    }
+
+    bool new_word = false;
+
+    if (word_index < 0) {
+        if (count)
+            return NULL; // before first word, ignore
+        word_index = 0;
+        new_word = true;
+    }
+
+    // It may be in whitespace between two words or after the last word.
+    if (word_index < count && pos > bounds[word_index].b) {
+        word_index++;
+        new_word = true;
+    }
+
+    char *word = new_word ? "" : words[word_index];
+
+    // 3 types:
+    //  - command completion
+    //  - argument name completion (named arguments, --name val)
+    //  - argument value completion
+    // Arguments of form --name=val are not supported (although the parser does),
+    // and auto-completion will return bogus suggestions.
+
+    if (word_index == 0) {
+        for (size_t n = 0; cmds && cmds[n].name; n++)
+            append(cmds[n].name);
+    } else {
+        const struct command_def *cmd_def = find_cmd(cmds, words[0]);
+        if (cmd_def) {
+            if (str_starts_with(word, "--", NULL)) {
+                // Completing argument name.
+                for (size_t p = 0; cmd_def->params[p].type; p++) {
+                    assert(p < COMMAND_MAX_PARAMS);
+                    char *name = stack_sprintf(80, "--%s", cmd_def->params[p].name);
+                    append(name);
+                }
+            } else {
+                int arg_idx = -1;
+                char *prev = words[word_index - 1];
+                char *name = NULL;
+                if (str_starts_with(prev, "--", &name)) {
+                    // Named argument.
+                    for (size_t p = 0; cmd_def->params[p].type; p++) {
+                        assert(p < COMMAND_MAX_PARAMS);
+                        if (strcmp(cmd_def->params[p].name, name) == 0) {
+                            arg_idx = p;
+                            break;
+                        }
+                    }
+                } else {
+                    // Positional argument.
+                    arg_idx = word_index - 1;
+                }
+
+                if (arg_idx < COMMAND_MAX_PARAMS && cmd_def->params[arg_idx].type) {
+                    // Completing argument value.
+                    const struct command_param_def *def = &cmd_def->params[arg_idx];
+
+                    if (def->type == COMMAND_PARAM_TYPE_BOOL) {
+                        append("true");
+                        append("false");
+                    }
+
+                    for (size_t n = 0; def->aliases && def->aliases[n].user_val; n++)
+                        append(def->aliases[n].user_val);
+
+                    if (def->completer) {
+                        char **lst = def->completer(ctx);
+                        for (size_t n = 0; lst && lst[n]; n++) {
+                            append(lst[n]);
+                            free(lst[n]);
+                        }
+                        free(lst);
+                    }
+                }
+            }
+        }
+    }
+
+    return res;
+}
+
 static const char *get_type_help(const struct command_param_def *def)
 {
-
-
     if (def->type == COMMAND_PARAM_TYPE_INT64) {
         if (def->flags & COMMAND_FLAG_ALIAS_ONLY)
             return "string choice";

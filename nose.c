@@ -51,8 +51,6 @@
 
 extern char **environ;
 
-static const struct command_def command_list[];
-
 struct options {
     int64_t verbosity;
     bool run_selftest;
@@ -207,6 +205,7 @@ struct nose_ctx {
 #if HAVE_READLINE
     char readline_buf[10];
     size_t readline_buf_size;
+    char **readline_completion;
     char histfile[80];
 #endif
     struct pipe *rl_pipe;
@@ -262,6 +261,35 @@ static void cb_rl_handler(char *line)
     free(line);
 }
 
+static void clear_last_completion(struct nose_ctx *ctx)
+{
+    if (ctx->readline_completion) {
+        for (size_t n = 0; ctx->readline_completion[n]; n++)
+            free(ctx->readline_completion[n]);
+        free(ctx->readline_completion);
+        ctx->readline_completion = NULL;
+    }
+}
+
+static char *cb_completion(const char *text, int state)
+{
+    struct nose_ctx *ctx = cb_rl_nose_ctx;
+    if (!ctx)
+        return NULL;
+
+    if (state == 0) {
+        clear_last_completion(ctx);
+        int a, b; // unused, hoping readline word boundaries are as ours
+        ctx->readline_completion =
+            command_completer(command_list, ctx, rl_line_buffer, rl_point, &a, &b);
+    }
+
+    if (!ctx->readline_completion)
+        return NULL;
+    // This relies on readline stopping iterating once we return NULL.
+    return xstrdup(ctx->readline_completion[state]);
+}
+
 static void init_readline(struct nose_ctx *ctx, struct pipe *p)
 {
     if (cb_rl_nose_ctx)
@@ -274,6 +302,8 @@ static void init_readline(struct nose_ctx *ctx, struct pipe *p)
     rl_catch_signals = 0;
     // do not allow readline to freely corrupt memory
     rl_change_environment = 0;
+
+    rl_completion_entry_function = cb_completion;
 
     rl_input_available_hook = cb_rl_input_available_hook;
     rl_getc_function = cb_rl_getc_function;
@@ -308,6 +338,7 @@ static void uninit_readline(struct nose_ctx *ctx, struct pipe *p)
         rl_clear_visible_line();
         rl_callback_handler_remove();
         ctx->rl_pipe = NULL;
+        clear_last_completion(cb_rl_nose_ctx);
         cb_rl_nose_ctx = NULL;
 
         if (ctx->histfile[0])

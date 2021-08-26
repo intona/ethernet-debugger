@@ -747,13 +747,16 @@ static void cmd_dev_list(struct command_ctx *cctx, struct command_param *params,
             json_out_array_entry_start(cctx->jout);
             json_out_string(cctx->jout, devname);
         } else {
+            char *state = "";
+            if (ctx->usb_dev && libusb_get_device(ctx->usb_dev->dev) == list[n])
+                state = " [opened]";
             // Note: no serial number return per API yet. Maybe if someone
             // actually requests it as a feature.
             char serial[USB_DEVICE_SERIAL_LEN];
             if (usb_get_device_serial(list[n], serial, sizeof(serial))) {
-                LOG(cctx, " - '%s' (%s)\n", serial, devname);
+                LOG(cctx, " - '%s' (%s)%s\n", serial, devname, state);
             } else {
-                LOG(cctx, " - '%s'\n", devname);
+                LOG(cctx, " - '%s'%s\n", devname, state);
             }
         }
 

@@ -769,6 +769,38 @@ static void cmd_dev_list(struct command_ctx *cctx, struct command_param *params,
     }
 }
 
+static char **complete_dev_name(void *ud)
+{
+    struct nose_ctx *ctx = ud;
+    char **res = NULL;
+    size_t num_res = 0;
+
+    libusb_device **list = NULL;
+    libusb_get_device_list(usb_thread_libusb_context(ctx->global->usb_thr), &list);
+
+    for (size_t n = 0; list && list[n]; n++) {
+        char devname[USB_DEVICE_NAME_LEN];
+
+        if (!usb_get_device_name(list[n], devname, sizeof(devname)))
+            continue;
+
+        XEXTEND_ARRAY(res, num_res, 1);
+        res[num_res++] = xstrdup(devname);
+
+        char serial[USB_DEVICE_SERIAL_LEN];
+        if (usb_get_device_serial(list[n], serial, sizeof(serial))) {
+            XEXTEND_ARRAY(res, num_res, 1);
+            res[num_res++] = xstrdup(serial);
+        }
+    }
+
+    libusb_free_device_list(list, 1);
+
+    XEXTEND_ARRAY(res, num_res, 1);
+    res[num_res] = NULL;
+    return res;
+}
+
 static void on_grabber_status_timer(void *ud, struct timer *t)
 {
     struct nose_ctx *ctx = ud;
@@ -1627,11 +1659,14 @@ static void on_extcap_ctrl_out(void *ud, struct pipe *p, unsigned events)
 
 #define PHY_SELECT PHY_SELECT_DEF(NULL)
 
-static const struct command_def command_list[] = {
+const struct command_def command_list[] = {
     {"help", "List commands", cmd_help, {
         {"command", COMMAND_PARAM_TYPE_STR, "all", "show help for specific command"}, }},
     {"device_open", "Open USB device", cmd_dev_open, {
-        {"name", COMMAND_PARAM_TYPE_STR, "default", "device name"}, }},
+        {"name", COMMAND_PARAM_TYPE_STR, "default", "device name",
+            .completer = complete_dev_name,
+        },
+    }},
     {"device_close", "Close USB device", cmd_dev_close},
     {"device_list", "List relevant USB devices", cmd_dev_list},
     {"capture_start", "Start capture", cmd_grab_start, {

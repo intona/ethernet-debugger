@@ -1344,9 +1344,9 @@ static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
         const char *name = NULL;
         switch (fw_mode) {
         case 0:  name = "same (force speed to PHY with lowest speed)"; break;
-        case 1:  name = "10"; break;
-        case 2:  name = "100"; break;
-        case 3:  name = "1000"; break;
+        case 1:  name = "10MBit"; break;
+        case 2:  name = "100MBit"; break;
+        case 3:  name = "1000MBit"; break;
         case 4:  name = "manual (starts out with independent auto-negotiation)"; break;
         }
         if (r < 0)

@@ -67,6 +67,7 @@ struct options {
     int64_t usbbuf;
     bool strip_frames;
     bool capture_stats;
+    char *init_cmds;
     bool print_version;
     char *extcap_version;
     bool extcap_interfaces;
@@ -105,6 +106,11 @@ const struct option_def option_list[] = {
     {"firmware-update-force", offsetof(struct options, fw_update_force),
         COMMAND_PARAM_TYPE_BOOL,
         "Update a device even if it has a recent or newer firmware version."},
+    {"cmd", offsetof(struct options, init_cmds),
+        COMMAND_PARAM_TYPE_STR,
+        "Run a list of commands on start. Multiple commands can be separated "
+        "with ; (needs spaces around it). If a command fails, exit with exit "
+        "code 2."},
     // Also used by Wireshark extcap.
     {"fifo", offsetof(struct options, capture_to),
         COMMAND_PARAM_TYPE_STR,
@@ -1763,6 +1769,62 @@ const struct command_def command_list[] = {
     {0}
 };
 
+static int run_commands(struct nose_ctx *ctx, char *cmds)
+{
+    // In case someone tries to be funny and uses "set cmd ..." in --cmd.
+    cmds = xstrdup(cmds);
+    struct wordbound *bounds;
+    char **words = split_spaces_with_quotes(cmds,  &bounds);
+    size_t cmd_start = 0; // offset into cmds string
+    int rc = 0;
+    for (size_t n = 0; ; n++) {
+        bool valid = words && words[n];
+        bool flush = !valid;
+        if (valid) {
+            // Accept only an unquoted ; as command separator. Quoted ";" can be
+            // a normal argument to a command (if ever needed).
+            if (strcmp(words[n], ";") == 0 && bounds[n].b - bounds[n].a == 1)
+                flush = true;
+        }
+
+        if (flush) {
+            // Split the original string, because we don't want to have any kind
+            // of double-escaping hell; basically split_spaces_with_quotes() is
+            // done only to find unquoted ; separators in a clean and simple way.
+            size_t cmd_end = valid ? bounds[n].a : strlen(cmds);
+            char *cmd = xasprintf("%.*s", (int)(cmd_end - cmd_start),
+                                  cmds + cmd_start);
+
+            struct command_ctx cctx = {
+                .log = ctx->log,
+                .priv = ctx,
+            };
+
+            command_dispatch(command_list, &cctx, cmd);
+
+            free(cmd);
+
+            if (!cctx.success) {
+                rc = 2;
+                goto done;
+            }
+
+            if (!valid)
+                break;
+
+            cmd_start = bounds[n].b + 1;
+        }
+    }
+
+done:
+    for (size_t n = 0; words && words[n]; n++)
+        free(words[n]);
+    free(words);
+    free(bounds);
+    free(cmds);
+    return rc;
+}
+
 static int handle_firmware_update(struct nose_ctx *ctx)
 {
     // (duplicates some of the --device logic)
@@ -2305,6 +2367,14 @@ int main(int argc, char **argv)
     ctx->global->usb_thr = usb_thread_create(ctx->global);
     if (!ctx->global->usb_thr)
         goto error_exit;
+
+    if (ctx->opts.init_cmds[0]) {
+        int err = run_commands(ctx, ctx->opts.init_cmds);
+        if (err) {
+            flush_log(ctx);
+            exit(err);
+        }
+    }
 
     if (strcmp(ctx->opts.device, "help") == 0) {
         process_command(ctx, "device_list", NULL);

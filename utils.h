@@ -173,9 +173,14 @@ size_t round_up_power_of_2(size_t v);
 size_t round_down_power_of_2(size_t v);
 
 // Return whether s ends with suffix (always returns true if suffix==""). If
-// out_end is not NULL, then *end is set to s+(strlen(s)-strlen(suffix)) on true,
-// or not touched if false is returned.
+// out_end is not NULL, then *out_end is set to s+(strlen(s)-strlen(suffix)) on
+// true, or not touched if false is returned.
 bool str_ends_with(const char *s, const char *suffix, char **out_end);
+
+// Return whether s starts with prefix (always returns true if prefix==""). If
+// out_rest is not NULL, then *out_rest is set to s+strlen(prefix) on true,
+// or not touched if false is returned.
+bool str_starts_with(const char *s, const char *prefix, char **out_rest);
 
 // An appendable buffer. This is meant for writing to a fixed buffer, while
 // keeping track of the write position, and making sure it will not just write

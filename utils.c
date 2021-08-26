@@ -212,6 +212,19 @@ bool str_ends_with(const char *s, const char *suffix, char **out_end)
     return true;
 }
 
+bool str_starts_with(const char *s, const char *prefix, char **out_rest)
+{
+    size_t s_len = strlen(s);
+    size_t prefix_len = strlen(prefix);
+    if (prefix_len > s_len)
+        return false;
+    if (memcmp(s, prefix, prefix_len) != 0)
+        return false;
+    if (out_rest)
+        *out_rest = (char *)s + prefix_len;
+    return true;
+}
+
 #ifdef __MINGW32__
 char *strndup(const char *s, size_t n)
 {

@@ -266,6 +266,16 @@ static int find_cmd_param(const struct command_def *cmd, const char *name)
     return -1;
 }
 
+static const struct command_def *find_cmd(const struct command_def *cmds,
+                                          const char *cmdname)
+{
+    for (size_t n = 0; cmds[n].name; n++) {
+        if (strcmp(cmdname, cmds[n].name) == 0)
+            return &cmds[n];
+    }
+    return NULL;
+}
+
 void command_dispatch(const struct command_def *cmds, struct command_ctx *ctx,
                       const char *cmd)
 {
@@ -302,14 +312,7 @@ void command_dispatch(const struct command_def *cmds, struct command_ctx *ctx,
         goto done;
     }
 
-    const struct command_def *cmd_def = NULL;
-    for (size_t n = 0; cmds[n].name; n++) {
-        if (strcmp(cmdname, cmds[n].name) == 0) {
-            cmd_def = &cmds[n];
-            break;
-        }
-    }
-
+    const struct command_def *cmd_def = find_cmd(cmds, cmdname);
     if (!cmd_def) {
         // Ignore whitespace or comment-only lines.
         if (cmdname[0] && cmdname[0] != '#')

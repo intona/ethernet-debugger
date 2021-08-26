@@ -1623,7 +1623,7 @@ static const struct command_def command_list[] = {
          .irange = {-1, 255}},
     }},
     {"speed", "Set Ethernet speed on both ports", cmd_set_speed, {
-        {"speed", COMMAND_PARAM_TYPE_STR, "one of 10, 100, 1000, same, manual"}, }},
+        {"speed", COMMAND_PARAM_TYPE_STR, NULL, "one of 10, 100, 1000, same, manual"}, }},
     {"block_ports", "Port blocker", cmd_block_ports, {
         PHY_SELECT }},
     {"disrupt", "Packet disruptor", cmd_disrupt, {

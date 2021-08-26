@@ -889,7 +889,7 @@ int device_get_port_state(struct logfn logfn, struct device *dev, unsigned port,
 
     bool inj_active = regs[0];
     state->inject_active = inj_active ? regs[2] : 0;
-    state->inject_count = regs[1];
+    state->inject_count = regs[1] / 2;
     state->inject_dropped = regs[3];
 
     reg_base = (4 + portidx) << 20;

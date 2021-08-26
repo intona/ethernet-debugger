@@ -1388,7 +1388,7 @@ static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
                 LOG(cctx, "    Injector inactive.\n");
             }
 
-            LOG(cctx, "    Injector inserted packets (mod 2^32): %"PRIu32"\n",
+            LOG(cctx, "    Injector inserted packets (mod 2^31): %"PRIu32"\n",
                 state.inject_count);
 
             LOG(cctx, "    Injector-dropped packets (mod 2^32): %"PRIu32"\n",

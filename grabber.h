@@ -33,7 +33,7 @@ struct grabber_packet {
 // larger than what the hardware can report.
 #define INTERPACKET_FRAME_GAP_UNKNOWN UINT16_MAX
 
-// "Normal", can show FCS, but no preamble/sfd.
+// "Normal", can show FCS, but no preamble/sfd. (We include FCS.)
 #define LINKTYPE_ETHERNET 1
 // This makes wireshark show the preamble/fcs as "frame preemption" frame, but
 // it's exactly what we want, and better than LINKTYPE_NETANALYZER_TRANSPARENT.

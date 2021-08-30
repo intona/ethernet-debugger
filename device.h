@@ -79,7 +79,7 @@ int device_mdio_read_both(struct device *dev, int reg, int out_val[2]);
 //  returns: ==0: success, <0: error code
 int device_mdio_write(struct device *dev, unsigned ports, int reg, int val);
 
-// All fields have mostly reasonable default at 0 init.
+// All fields have mostly reasonable defaults at 0 init.
 struct device_inject_params {
     uint32_t num_packets;   // number of packets to inject (UINT32_MAX for
                             // infinite; 0 for disable sending)
@@ -109,9 +109,10 @@ enum device_disrupt_mode {
     DEVICE_DISRUPT_DROP,        // drop the entire packet
 };
 
+// All fields have mostly reasonable defaults at 0 init.
 struct device_disrupt_params {
     uint32_t num_packets;   // number of packets to affect
-                            // UINT32_MAX for infinite; 0 for disable all
+                            // (UINT32_MAX for infinite; 0 for disable all)
     enum device_disrupt_mode mode; // how to do it
     uint32_t skip;          // number of packets to skip each time
                             // (1 = corrupt every 2nd packet)

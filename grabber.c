@@ -100,7 +100,7 @@ struct grabber {
 
     // protected by fifo_mutex
     bool shutdown;
-    bool error_open, error_write, error_discon;
+    bool error_open, error_write, error_filter, error_discon;
     uint64_t bytes_written;
     uint64_t system_start_time;
 
@@ -395,7 +395,7 @@ static void *writer_thread(void *ptr)
         for (size_t n = 0; n < gr->num_filters; n++) {
             if (!gr->filters[n]->fns->filter(gr->filters[n], pkt)) {
                 pthread_mutex_lock(&gr->fifo_mutex);
-                gr->error_write = true;
+                gr->error_filter = true;
                 gr->shutdown = true;
                 pthread_mutex_unlock(&gr->fifo_mutex);
                 goto done;
@@ -756,6 +756,7 @@ void grabber_read_status(struct grabber *gr, struct grabber_status *out_stats)
         .fatal_error = gr->error_discon ? "USB disconnected" :
                        gr->error_open ? "failed to open file" :
                        gr->error_write ? "failed to write to file" :
+                       gr->error_filter ? "filter failed" :
                        NULL,
         .bytes_written = gr->bytes_written,
         .port_stats = {gr->fifos[0].stats, gr->fifos[1].stats},

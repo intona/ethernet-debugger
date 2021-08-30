@@ -38,6 +38,9 @@ extern const char *const port_names[4];
 // Size of inject command packet buffer in bytes (PKT_ADDR_BITS).
 #define DEV_INJECT_ETH_BUF_SIZE (1 << 14)
 
+// Maximum size of packets that can be inject (non-raw, without preamble/FCS).
+#define DEV_INJECT_MAX_PKT_SIZE (DEV_INJECT_ETH_BUF_SIZE - 8 - 4)
+
 // Send a raw configuration packet, and wait for a reply. By definition, every
 // command will result in an immediate reply (or it's a firmware/gateware bug).
 // The definitions of all commands and their replies are located in

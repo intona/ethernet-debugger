@@ -676,6 +676,11 @@ int device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
         size += 8; // preamble, SFD
     }
 
+    if (size > DEV_INJECT_MAX_PKT_SIZE) {
+        logline(logfn, "error: packet too large\n");
+        return -1;
+    }
+
     // Aligned to 32 bit, so we can pass it to regs_write().
     size_t full_size = (size + 3) & ~3u;
     uint8_t *data = calloc(1, full_size);

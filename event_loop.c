@@ -263,6 +263,9 @@ void event_loop_run(struct event_loop *ev)
 // Deallocate ev. This is not allowed while event_loop_run() is being called.
 void event_loop_destroy(struct event_loop *ev)
 {
+    if (!ev)
+        return;
+
     assert(!ev->running);
     assert(!ev->num_items);
 
@@ -360,7 +363,8 @@ void timer_stop(struct timer *t)
 
 void timer_destroy(struct timer *t)
 {
-    event_loop_remove_item(t->item);
+    if (t)
+        event_loop_remove_item(t->item);
 }
 
 static void event_work(struct event_loop_item *item)
@@ -470,6 +474,8 @@ void event_set_notifier(struct event *ev, struct notifier *nf)
 
 void event_destroy(struct event *ev)
 {
+    if (!ev)
+        return;
     event_set_notifier(ev, NULL);
     event_loop_remove_item(ev->item);
 }
@@ -623,6 +629,8 @@ struct pipe *pipe_accept(struct pipe *p)
 
 void pipe_destroy(struct pipe *p)
 {
+    if (!p)
+        return;
     os_pipe_destroy(&p->os);
     free((void *)p->os.filename);
     buffer_dealloc(&p->read_buf);
@@ -632,7 +640,7 @@ void pipe_destroy(struct pipe *p)
 
 void pipe_drain_destroy(struct pipe *p)
 {
-    if (p->write_buf.size) {
+    if (p && p->write_buf.size) {
         p->close_on_write_done = true;
         p->on_event = NULL;
         return;

@@ -82,7 +82,7 @@ struct grabber_filter_fns {
 };
 
 struct grabber_options {
-    const char *filename;                   // pcapng output file
+    const char *filename;                   // pcapng output file (NULL to discard)
     size_t soft_buffer;                     // buffer between USB and file writer
                                             // (rounded down)
     size_t usb_buffer;                      // libusb buffers (rounded down)

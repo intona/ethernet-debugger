@@ -285,7 +285,6 @@ static void *writer_thread(void *ptr)
     struct grabber *gr = ptr;
     // Temporary buffer used for headers and packets.
     size_t wbuf_size = MAX_PCAPNG_PACKET_SIZE * 1000;
-    uint8_t *wbuf_data = NULL;
     int output_fd = -1;
     int link_type = gr->fifos[0].gr_iface.pcap_linktype;
 
@@ -305,80 +304,77 @@ static void *writer_thread(void *ptr)
         }
     }
 
-    if (strncmp(gr->filename, "fd:", 3) == 0) {
-        char *end;
-        output_fd = strtoul(gr->filename + 3, &end, 0);
-        if (end[0])
-            output_fd = -1;
-    } else {
-        output_fd = open(gr->filename, O_CREAT | O_WRONLY | O_TRUNC | O_BINARY, 0666);
-    }
+    struct wbuf buf = {0};
 
-    wbuf_data = malloc(wbuf_size);
+    if (gr->filename) {
+        if (strncmp(gr->filename, "fd:", 3) == 0) {
+            char *end;
+            output_fd = strtoul(gr->filename + 3, &end, 0);
+            if (end[0])
+                output_fd = -1;
+        } else {
+            output_fd = open(gr->filename, O_CREAT | O_WRONLY | O_TRUNC | O_BINARY, 0666);
+        }
 
-    if (output_fd < 0 || !wbuf_data) {
-        pthread_mutex_lock(&gr->fifo_mutex);
-        gr->error_open = true;
-        gr->shutdown = true;
-        pthread_mutex_unlock(&gr->fifo_mutex);
-        goto done;
-    }
+        buf = (struct wbuf) {
+            .ptr = malloc(wbuf_size),
+            .size = wbuf_size,
+        };
 
-    struct wbuf hdrbuf = {
-        .ptr = wbuf_data,
-        .size = wbuf_size,
-    };
+        if (output_fd < 0 || !buf.ptr) {
+            pthread_mutex_lock(&gr->fifo_mutex);
+            gr->error_open = true;
+            gr->shutdown = true;
+            pthread_mutex_unlock(&gr->fifo_mutex);
+            goto done;
+        }
 
-    // section header block
-    size_t pos = 0;
-    wbuf_write32(&hdrbuf, 0x0A0D0D0A); // block type
-    wbuf_write32(&hdrbuf, 0); // block total length
-    wbuf_write32(&hdrbuf, 0x1A2B3C4D); // byte order magic
-    wbuf_write32(&hdrbuf, 1); // version
-    wbuf_write64(&hdrbuf, -1); // section length
-    // options end
-    wbuf_write32(&hdrbuf, 0);
-    // block end
-    write_pcapng_block_size(&hdrbuf, pos);
-
-    // Note: we write 2 interface blocks for both directions. But we could also
-    //       just use 1 interface and set the inbound/outbound flags.
-    //       Using separate interfaces lets us set different names, though.
-    for (int n = 0; n < 2; n++) {
-        // interface description block
-        pos = hdrbuf.pos;
-        wbuf_write32(&hdrbuf, 1);
-        wbuf_write32(&hdrbuf, 0);
-        wbuf_write32(&hdrbuf, link_type); // LinkType
-        wbuf_write32(&hdrbuf, 0); // SnapLen
-        // option: if_fcslen
-        wbuf_write16(&hdrbuf, 13); // if_fcslen
-        wbuf_write16(&hdrbuf, 1); // 1 byte length
-        wbuf_write8(&hdrbuf, 4); // value: 4 bytes
-        wbuf_write_pad32(&hdrbuf);
-        // option: if_name
-        const char *if_name = n == 0 ? "Port A" : "Port B";
-        wbuf_write16(&hdrbuf, 2); // if_name
-        wbuf_write16(&hdrbuf, strlen(if_name)); // length
-        wbuf_write(&hdrbuf, if_name, strlen(if_name));
-        wbuf_write_pad32(&hdrbuf);
-        // option: if_tsresol (timestamp resolution)
-        wbuf_write16(&hdrbuf, 9); // if_tsresol
-        wbuf_write16(&hdrbuf, 1); // 1 byte length
-        wbuf_write8(&hdrbuf, 9); // value: 10^-9 => nanoseconds
-        wbuf_write_pad32(&hdrbuf);
+        // section header block
+        size_t pos = 0;
+        wbuf_write32(&buf, 0x0A0D0D0A); // block type
+        wbuf_write32(&buf, 0); // block total length
+        wbuf_write32(&buf, 0x1A2B3C4D); // byte order magic
+        wbuf_write32(&buf, 1); // version
+        wbuf_write64(&buf, -1); // section length
         // options end
-        wbuf_write32(&hdrbuf, 0);
+        wbuf_write32(&buf, 0);
         // block end
-        write_pcapng_block_size(&hdrbuf, pos);
+        write_pcapng_block_size(&buf, pos);
+
+        // Note: we write 2 interface blocks for both directions. But we could also
+        //       just use 1 interface and set the inbound/outbound flags.
+        //       Using separate interfaces lets us set different names, though.
+        for (int n = 0; n < 2; n++) {
+            // interface description block
+            pos = buf.pos;
+            wbuf_write32(&buf, 1);
+            wbuf_write32(&buf, 0);
+            wbuf_write32(&buf, link_type); // LinkType
+            wbuf_write32(&buf, 0); // SnapLen
+            // option: if_fcslen
+            wbuf_write16(&buf, 13); // if_fcslen
+            wbuf_write16(&buf, 1); // 1 byte length
+            wbuf_write8(&buf, 4); // value: 4 bytes
+            wbuf_write_pad32(&buf);
+            // option: if_name
+            const char *if_name = n == 0 ? "Port A" : "Port B";
+            wbuf_write16(&buf, 2); // if_name
+            wbuf_write16(&buf, strlen(if_name)); // length
+            wbuf_write(&buf, if_name, strlen(if_name));
+            wbuf_write_pad32(&buf);
+            // option: if_tsresol (timestamp resolution)
+            wbuf_write16(&buf, 9); // if_tsresol
+            wbuf_write16(&buf, 1); // 1 byte length
+            wbuf_write8(&buf, 9); // value: 10^-9 => nanoseconds
+            wbuf_write_pad32(&buf);
+            // options end
+            wbuf_write32(&buf, 0);
+            // block end
+            write_pcapng_block_size(&buf, pos);
+        }
+
+        flush_wbuf_to_pipe(gr, output_fd, &buf);
     }
-
-    flush_wbuf_to_pipe(gr, output_fd, &hdrbuf);
-
-    struct wbuf buf = {
-        .ptr = wbuf_data,
-        .size = wbuf_size,
-    };
 
     while (1) {
         if (buf.size - buf.pos < MAX_PCAPNG_PACKET_SIZE)
@@ -423,67 +419,69 @@ static void *writer_thread(void *ptr)
             }
         }
 
-        // a pcapng packet
-        pos = buf.pos;
-        wbuf_write32(&buf, 6);
-        wbuf_write32(&buf, 0);
-        wbuf_write32(&buf, pkt->iface->port); // interface ID
-        wbuf_write32(&buf, pkt->time_ns >> 32); // timestamp high
-        wbuf_write32(&buf, pkt->time_ns & UINT32_MAX); // timestamp low
-        wbuf_write32(&buf, pcap_len); // packet length (captured)
-        wbuf_write32(&buf, pcap_len); // packet length (original)
-        wbuf_write(&buf, pcap_data, pcap_len);
-        wbuf_write_pad32(&buf);
-        // option: packet flags
-        wbuf_write16(&buf, 2); // epb_flags
-        wbuf_write16(&buf, 4); // length
-        uint32_t flags = 0;
-        // Note: there are many other errors you could flag (it's unclear
-        // whether this really helps with anything).
-        if (pkt->size < 7 || memcmp(pkt->data, "UUUUUUU", 7) != 0)
-            flags |= 1u << 30; // "preamble error"
-        if (pkt->size < 8 || pkt->data[7] != 0xD5)
-            flags |= 1u << 29; // "start frame delimiter error"
-        if (pkt->fcs_error)
-            flags |= 1u << 24; // "crc error"
-        if (pkt->symbol_error)
-            flags |= 1u << 31; // "symbol error"
-        // (depends on ethernet speed; use lowest tolerated gap for gigabit)
-        if (pkt->interpacket_frame_gap < 8)
-            flags |= 1u << 27; // "wrong Inter Frame Gap error"
-        if (pkt->fcs_error)
-            gr->fifos[pkt->iface->port].num_crcerr++;
-        wbuf_write32(&buf, flags);
-        // option: dropped packet count
-        wbuf_write16(&buf, 4); // epb_dropcount
-        wbuf_write16(&buf, 8); // length
-        wbuf_write64(&buf, pkt->dropped_inc);
-        // option: text comment (we can use this to add any information
-        // without having to write a dissector; although new option types
-        // using "native" values instead of text could be added officially)
-        size_t comm_len = strlen(pkt->comments);
-        // Drop trailing \n, because it looks bad in Wireshark.
-        if (comm_len > 0 && pkt->comments[comm_len - 1] == '\n') {
-            pkt->comments[comm_len - 1] = '\0';
-            comm_len--;
-        }
-        if (comm_len) {
-            wbuf_write16(&buf, 1); // opt_comment
-            wbuf_write16(&buf, comm_len); // length
-            wbuf_write(&buf, pkt->comments, comm_len);
+        if (buf.ptr) {
+            // a pcapng packet
+            size_t pos = buf.pos;
+            wbuf_write32(&buf, 6);
+            wbuf_write32(&buf, 0);
+            wbuf_write32(&buf, pkt->iface->port); // interface ID
+            wbuf_write32(&buf, pkt->time_ns >> 32); // timestamp high
+            wbuf_write32(&buf, pkt->time_ns & UINT32_MAX); // timestamp low
+            wbuf_write32(&buf, pcap_len); // packet length (captured)
+            wbuf_write32(&buf, pcap_len); // packet length (original)
+            wbuf_write(&buf, pcap_data, pcap_len);
             wbuf_write_pad32(&buf);
+            // option: packet flags
+            wbuf_write16(&buf, 2); // epb_flags
+            wbuf_write16(&buf, 4); // length
+            uint32_t flags = 0;
+            // Note: there are many other errors you could flag (it's unclear
+            // whether this really helps with anything).
+            if (pkt->size < 7 || memcmp(pkt->data, "UUUUUUU", 7) != 0)
+                flags |= 1u << 30; // "preamble error"
+            if (pkt->size < 8 || pkt->data[7] != 0xD5)
+                flags |= 1u << 29; // "start frame delimiter error"
+            if (pkt->fcs_error)
+                flags |= 1u << 24; // "crc error"
+            if (pkt->symbol_error)
+                flags |= 1u << 31; // "symbol error"
+            // (depends on ethernet speed; use lowest tolerated gap for gigabit)
+            if (pkt->interpacket_frame_gap < 8)
+                flags |= 1u << 27; // "wrong Inter Frame Gap error"
+            if (pkt->fcs_error)
+                gr->fifos[pkt->iface->port].num_crcerr++;
+            wbuf_write32(&buf, flags);
+            // option: dropped packet count
+            wbuf_write16(&buf, 4); // epb_dropcount
+            wbuf_write16(&buf, 8); // length
+            wbuf_write64(&buf, pkt->dropped_inc);
+            // option: text comment (we can use this to add any information
+            // without having to write a dissector; although new option types
+            // using "native" values instead of text could be added officially)
+            size_t comm_len = strlen(pkt->comments);
+            // Drop trailing \n, because it looks bad in Wireshark.
+            if (comm_len > 0 && pkt->comments[comm_len - 1] == '\n') {
+                pkt->comments[comm_len - 1] = '\0';
+                comm_len--;
+            }
+            if (comm_len) {
+                wbuf_write16(&buf, 1); // opt_comment
+                wbuf_write16(&buf, comm_len); // length
+                wbuf_write(&buf, pkt->comments, comm_len);
+                wbuf_write_pad32(&buf);
+            }
+            // options end
+            wbuf_write32(&buf, 0);
+            // block end
+            write_pcapng_block_size(&buf, pos);
         }
-        // options end
-        wbuf_write32(&buf, 0);
-        // block end
-        write_pcapng_block_size(&buf, pos);
     }
 
 done:
 
     if (output_fd >= 0)
         close(output_fd);
-    free(wbuf_data);
+    free(buf.ptr);
 
     return NULL;
 }

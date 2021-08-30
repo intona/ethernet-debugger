@@ -113,11 +113,11 @@ void *try_realloc_array(void *ptr, size_t elem_size, size_t num_elems);
     } while(0)
 
 // Allocate T on the heap. This initialized the memory with 0.
-#define ALLOC(T) (((T) *)calloc(sizeof(T), 1))
+#define ALLOC(T) ((T *)calloc(sizeof(T), 1))
 
 // Allocate T on the heap. This initialized the memory with 0.
 // On allocation failure, crash the process.
-#define XALLOC(T) (((T) *)xalloc(sizeof(T)))
+#define XALLOC(T) ((T *)xalloc(sizeof(T)))
 
 void *xalloc_impl(size_t size, const char *file, int line);
 

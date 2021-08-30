@@ -33,6 +33,7 @@ sources = [
     'device.c',
     'crc32.c',
     'filter_commenter.c',
+    'filter_latency_tester.c',
     'init_and_test.c',
     'json-parser/json.c',
     'json-parser/json_helpers.c',

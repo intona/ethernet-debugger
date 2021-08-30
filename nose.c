@@ -208,6 +208,12 @@ struct nose_ctx {
     uint64_t last_link_up_time[2]; // in get_time_us()
     uint64_t last_link_down_time[2]; // in get_time_us()
     uint64_t num_link_changes[2];
+    bool latency_tester_sender, latency_tester_receiver;
+    size_t latency_tester_cnt;
+    uint32_t latency_tester_seq, latency_tester_seq_max;
+    bool latency_tester_once;
+    int latency_tester_pkt_size;
+    struct timer *latency_tester_timer;
 #if HAVE_READLINE
     char readline_buf[10];
     size_t readline_buf_size;
@@ -658,6 +664,11 @@ static void grab_stop(struct nose_ctx *ctx)
         LOG(ctx, "Capture thread stopped.\n");
         if (ctx->exit_on_capture_stop)
             event_loop_request_terminate(ctx->ev);
+        if (ctx->latency_tester_receiver) {
+            LOG(ctx, "Receiver stopped. Ports will remain blocked.\n"
+                      "(Use 'block_ports none' to unblock.)\n");
+            ctx->latency_tester_receiver = false;
+        }
     }
 }
 
@@ -877,32 +888,23 @@ static void on_grabber_status_timer(void *ud, struct timer *t)
     ctx->grabber_status_prev = st;
 }
 
-static bool grab_start(struct nose_ctx *ctx, struct logfn log, const char *file)
+static void init_grabber_opts(struct nose_ctx *ctx, struct grabber_options *opts)
 {
-    if (!ctx->usb_dev) {
-        logline(log, "Error: no device opened.\n");
-        return false;
-    }
-
-    grab_stop(ctx);
-
-    struct grabber_filter *filters[10];
-    size_t num_filters = 0;
-
-    filters[num_filters++] = filter_commenter_create();
-
-    struct grabber_options opts = {
-        .filename = file,
+    *opts = (struct grabber_options) {
         .soft_buffer = ctx->opts.softbuf, // TODO: can overflow on 32 bit
         .usb_buffer = ctx->opts.usbbuf,
         .linktype = ctx->opts.strip_frames ? LINKTYPE_ETHERNET
                                            : LINKTYPE_ETHERNET_MPACKET,
         .device = ctx->usb_dev,
-        .filters = filters,
-        .num_filters = num_filters,
     };
+};
 
-    grabber_start(ctx->global, &opts);
+static bool start_grabber(struct nose_ctx *ctx, struct grabber_options *opts)
+{
+    if (!ctx->usb_dev || ctx->usb_dev->grabber)
+        return false; // leaks opts->filters
+
+    grabber_start(ctx->global, opts);
     bool success = !!ctx->usb_dev->grabber;
 
     if (success) {
@@ -917,20 +919,26 @@ static bool grab_start(struct nose_ctx *ctx, struct logfn log, const char *file)
     return success;
 }
 
-static void cmd_grab_start(struct command_ctx *cctx, struct command_param *params,
-                           size_t num_params)
+static bool grab_start(struct nose_ctx *ctx, struct logfn log, const char *file)
 {
-    struct nose_ctx *ctx = cctx->priv;
-
-    cctx->success = grab_start(ctx, cctx->log, params[0].p_str);
-}
-
-static void cmd_grab_stop(struct command_ctx *cctx, struct command_param *params,
-                          size_t num_params)
-{
-    struct nose_ctx *ctx = cctx->priv;
+    if (!ctx->usb_dev) {
+        logline(log, "Error: no device opened.\n");
+        return false;
+    }
 
     grab_stop(ctx);
+
+    struct grabber_filter *filters[10];
+    size_t num_filters = 0;
+
+    filters[num_filters++] = filter_commenter_create();
+
+    struct grabber_options opts;
+    init_grabber_opts(ctx, &opts);
+    opts.filename = file;
+    opts.filters = filters;
+    opts.num_filters = num_filters;
+    return start_grabber(ctx, &opts);
 }
 
 static struct device *require_dev(struct command_ctx *cctx)
@@ -941,6 +949,24 @@ static struct device *require_dev(struct command_ctx *cctx)
         cctx->success = false;
     }
     return ctx->usb_dev;
+}
+
+static void cmd_grab_start(struct command_ctx *cctx, struct command_param *params,
+                           size_t num_params)
+{
+    struct nose_ctx *ctx = cctx->priv;
+    if (!require_dev(cctx))
+        return;
+
+    cctx->success = grab_start(ctx, cctx->log, params[0].p_str);
+}
+
+static void cmd_grab_stop(struct command_ctx *cctx, struct command_param *params,
+                          size_t num_params)
+{
+    struct nose_ctx *ctx = cctx->priv;
+
+    grab_stop(ctx);
 }
 
 // Extra validation for PHY_SELECT parameters (in val), for which selecting no
@@ -1477,6 +1503,161 @@ static void cmd_exit(struct command_ctx *cctx, struct command_param *params,
     event_loop_request_terminate(ctx->ev);
 }
 
+static void on_send_test(void *ud, struct timer *t)
+{
+    struct nose_ctx *ctx = ud;
+    if (!ctx->usb_dev || !ctx->latency_tester_sender)
+        goto disable;
+
+    bool last = ctx->latency_tester_seq == ctx->latency_tester_seq_max;
+
+    if (!ctx->latency_tester_seq)
+        LOG(ctx, "Latency tester: new test run (%zu)\n", ctx->latency_tester_cnt++);
+
+    uint8_t pkt[DEV_INJECT_MAX_PKT_SIZE] = {0};
+    // Set 00:00:00:00:00:02 as destination MAC
+    pkt[5] = 2;
+    // Set 00:00:00:00:00:01 as source MAC
+    pkt[11] = 1;
+    // Set 0xBEEF as ethertype (big endian), a random unassigned protocol type.
+    // (https://www.iana.org/assignments/ieee-802-numbers/ieee-802-numbers.xhtml)
+    pkt[12] = 0xBE;
+    pkt[13] = 0xEF;
+    // Specific magic
+    memcpy(&pkt[14], &(uint32_t){LATENCY_TESTER_MAGIC}, 4);
+    // Sequence number (little endian)
+    memcpy(&pkt[18], &(uint32_t){ctx->latency_tester_seq}, 4);
+    // Another magic, 0..0 or 1..1 depending on whether this is the end.
+    uint32_t last_magic = 0;
+    if (last)
+        last_magic = ~last_magic;
+    memcpy(&pkt[22], &last_magic, 4);
+
+    struct device_inject_params p = {
+        .num_packets    = 1,
+        .data           = pkt,
+        .data_size      = ctx->latency_tester_pkt_size,
+    };
+
+    device_inject_pkt(ctx->log, ctx->usb_dev, 3, &p);
+
+    ctx->latency_tester_seq++;
+    if (last) {
+        ctx->latency_tester_seq = 0;
+        if (ctx->latency_tester_once)
+            goto disable;
+    }
+
+    return;
+disable:
+    if (ctx->latency_tester_timer) {
+        LOG(ctx, "Sender stopped. Ports will remain blocked.\n"
+                 "(Use 'block_ports none' to unblock.)\n");
+    }
+    ctx->latency_tester_sender = false;
+    timer_destroy(ctx->latency_tester_timer);
+    ctx->latency_tester_timer = NULL;
+}
+
+static void cmd_latency_tester_sender(struct command_ctx *cctx,
+                                      struct command_param *params,
+                                      size_t num_params)
+{
+    struct nose_ctx *ctx = cctx->priv;
+
+    struct device *dev = require_dev(cctx);
+    if (!dev)
+        return;
+
+    bool stop = params[0].p_bool;
+    int64_t samples = params[1].p_int;
+    int psize = params[2].p_int;
+    int delay = params[3].p_int;
+    bool once = params[4].p_bool;
+
+    ctx->latency_tester_sender = false;
+    // Mess to share disable/message.
+    on_send_test(ctx, ctx->latency_tester_timer);
+
+    if (stop)
+        return;
+
+    if (ctx->latency_tester_receiver) {
+        LOG(cctx, "Latency tester sender/receiver cannot be on the same device.\n");
+        cctx->success = false;
+        return;
+    }
+
+    ctx->latency_tester_timer = event_loop_create_timer(ctx->ev);
+    timer_set_on_timer(ctx->latency_tester_timer, ctx, on_send_test);
+    timer_start(ctx->latency_tester_timer, delay);
+
+    struct device_disrupt_params p = {
+        .mode           = DEVICE_DISRUPT_DROP,
+        .num_packets    = UINT32_MAX,
+    };
+    device_disrupt_pkt(cctx->log, dev, 3, &p);
+
+    ctx->latency_tester_seq = 0;
+    ctx->latency_tester_cnt = 0;
+    ctx->latency_tester_seq_max = samples - 1;
+    ctx->latency_tester_once = once;
+    ctx->latency_tester_pkt_size = psize;
+    ctx->latency_tester_sender = true;
+}
+
+static void cmd_latency_tester_receiver(struct command_ctx *cctx,
+                                        struct command_param *params,
+                                        size_t num_params)
+{
+    struct nose_ctx *ctx = cctx->priv;
+
+    struct device *dev = require_dev(cctx);
+    if (!dev)
+        return;
+
+    bool stop = params[0].p_bool;
+    bool wait_for_0 = params[1].p_bool;
+    const char *outfile = params[2].p_str;
+
+    if (stop) {
+        if (ctx->latency_tester_receiver)
+            grab_stop(ctx);
+        return;
+    }
+
+    if (ctx->latency_tester_sender) {
+        LOG(cctx, "Latency tester sender/receiver cannot be on the same device.\n");
+        cctx->success = false;
+        return;
+    }
+
+    grab_stop(ctx);
+
+    struct grabber_options opts;
+    init_grabber_opts(ctx, &opts);
+
+    struct grabber_filter *filters[1] = {
+        filter_latency_tester_create(ctx->log, outfile, wait_for_0)
+    };
+    opts.filters = filters;
+    opts.num_filters = 1;
+
+    if (!start_grabber(ctx, &opts)) {
+        cctx->success = false;
+        return;
+    }
+
+    struct device_disrupt_params p = {
+        .mode           = DEVICE_DISRUPT_DROP,
+        .num_packets    = UINT32_MAX,
+    };
+    device_disrupt_pkt(cctx->log, dev, 3, &p);
+
+    ctx->latency_tester_receiver = true;
+    LOG(cctx, "Receiver setup. Listening to incoming packets.\n");
+};
+
 static void write_to_pipe(void *ctx, const char *fmt, va_list va)
 {
     struct pipe *p = ctx;
@@ -1764,6 +1945,21 @@ const struct command_def command_list[] = {
         {"time", COMMAND_PARAM_TYPE_INT64, NULL,
             "wait time in MS",
             .irange = {0, 10737}},
+    }},
+    {"latency_tester_sender", "setup latency testing (sender role)", cmd_latency_tester_sender, {
+        {"stop", COMMAND_PARAM_TYPE_BOOL, "false", "disable testing"},
+        {"samples", COMMAND_PARAM_TYPE_INT64, "10000", "number of packets per test run",
+            .irange = {1, INT_MAX}},
+        {"packet-size", COMMAND_PARAM_TYPE_INT64, "64", "test payload length",
+            .irange = {26, DEV_INJECT_MAX_PKT_SIZE}},
+        {"delay", COMMAND_PARAM_TYPE_INT64, "1", "delay in milliseconds (approx)",
+            .irange = {1, 10000}},
+        {"once", COMMAND_PARAM_TYPE_BOOL, "false", "perform only one test run"},
+    }},
+    {"latency_tester_receiver", "setup latency testing (receiver role)", cmd_latency_tester_receiver, {
+        {"stop", COMMAND_PARAM_TYPE_BOOL, "false", "disable testing"},
+        {"wait-start", COMMAND_PARAM_TYPE_BOOL, "true", "wait for first sample"},
+        {"out-file", COMMAND_PARAM_TYPE_STR, "", "write results to this file"},
     }},
     {"exit", "Exit program", cmd_exit },
     {0}

@@ -220,6 +220,7 @@ void run_init_and_test(struct global *global, char *device, char *serial)
     global->log = (struct logfn){stdout, logfn_stdio};
 
     struct logfn log = global->log;
+    struct logfn nolog = {0};
     libusb_context *usbctx = usb_thread_libusb_context(global->usb_thr);
 
     void *fsbl = NULL;
@@ -227,16 +228,14 @@ void run_init_and_test(struct global *global, char *device, char *serial)
     void *fw = NULL;
     size_t fw_size = 0;
 
-    if (!read_file("firmware.dat", &fw, &fw_size) && errno != ENOENT) {
+    if (!read_file(nolog, "firmware.dat", &fw, &fw_size) && errno != ENOENT) {
         logline(log, "firmware.dat could not be read.\n");
         report_error(21);
     }
 
     if (fw) {
-        if (!read_file("fsbl.img", &fsbl, &fsbl_size)) {
-            logline(log, "fsbl.img not found.\n");
+        if (!read_file(log, "fsbl.img", &fsbl, &fsbl_size))
             report_error(21);
-        }
 
         if (!fw_verify(log, fw, fw_size)) {
             logline(log, "firmware.dat is broken.\n");

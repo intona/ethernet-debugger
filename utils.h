@@ -226,7 +226,8 @@ char *strndup(const char *s, size_t n);
 // On success, sets *data and *size to the file contents. (If *size==0, then
 // still *data!=NULL.) Use free() to deallocate *data.
 // errno is set on failure (clobbered on success).
-bool read_file(const char *fname, void **data, size_t *size);
+// log is used on errors.
+bool read_file(struct logfn log, const char *fname, void **data, size_t *size);
 
 // Parse the given hex string in some vaguely defined way.
 // Currently supported syntax:

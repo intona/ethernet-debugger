@@ -2038,10 +2038,8 @@ static int handle_firmware_update(struct nose_ctx *ctx)
 
     void *data;
     size_t size;
-    if (!read_file(ctx->opts.fw_update_file, &data, &size)) {
-        LOG(ctx, "Error: could not read file '%s'.\n", ctx->opts.fw_update_file);
+    if (!read_file(ctx->log, ctx->opts.fw_update_file, &data, &size))
         return 2;
-    }
     int fw_version = fw_verify(ctx->log, data, size);
     if (!fw_version) {
         free(data);

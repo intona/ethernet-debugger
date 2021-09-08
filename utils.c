@@ -238,7 +238,8 @@ char *strndup(const char *s, size_t n)
 }
 #endif
 
-bool read_file(const char *fname, void **out_data, size_t *out_size)
+bool read_file(struct logfn log, const char *fname,
+               void **out_data, size_t *out_size)
 {
     bool ok = false;
     FILE *f = NULL;
@@ -282,6 +283,9 @@ error:
     free(data);
     if (f)
         fclose(f);
+    // Note: strerror() is ridiculously not thread-safe on some systems; ignore that.
+    if (!ok)
+        logline(log, "Error reading '%s': %s\n", fname, strerror(err));
     errno = err;
     return ok;
 }

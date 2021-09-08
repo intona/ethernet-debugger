@@ -1265,6 +1265,12 @@ static void cmd_inject(struct command_ctx *cctx, struct command_param *params,
 
     int ports = params[0].p_int;
     const char *s = params[1].p_str;
+    const char *file = params[8].p_str;
+
+    if (s[0] && file[0]) {
+        LOG(cctx, "error: cannot provide both data and file arguments\n");
+        return;
+    }
 
     struct device_inject_params p = {
         .raw            = params[2].p_bool,
@@ -1285,8 +1291,15 @@ static void cmd_inject(struct command_ctx *cctx, struct command_param *params,
     uint8_t *bytes = NULL;
     size_t size = 0;
 
-    if (!parse_hex(cctx->log, s, &bytes, &size))
-        goto done;
+    if (s[0]) {
+        if (!parse_hex(cctx->log, s, &bytes, &size))
+            goto done;
+    } else if (file[0]) {
+        void *vdata = NULL;
+        if (!read_file(cctx->log, file, &vdata, &size))
+            goto done;
+        bytes = vdata;
+    }
 
     p.data = bytes;
     p.data_size = size;
@@ -1927,6 +1940,8 @@ const struct command_def command_list[] = {
             "generate error at byte offset",
             PARAM_ALIASES({"disable", "-1"}),
             .irange = {-1, UINT32_MAX}},
+        {"file", COMMAND_PARAM_TYPE_STR, "",
+            "send packet loaded from file"},
     }},
     {"inject_stop", "Disable packet injector", cmd_inject_stop, {
         PHY_SELECT_DEF("AB"),

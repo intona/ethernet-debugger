@@ -641,12 +641,24 @@ static void on_phy_change(void *ud, struct event *ev)
         for (int port = 1; port <= 2; port++) {
             struct phy_status st = ctx->prev_phy_st[port - 1];
 
+            struct device_port_state pst;
+            if (device_get_port_state(ctx->log, dev, port, &pst))
+                pst = (struct device_port_state){0};
+
             char *master = "";
             if (st.master >= 0)
                 master = st.master ? " (master)" : " (slave)";
 
-            LOG(ctx, "PHY %s: link=%s speed=%dMBit%s\n", port_names[port],
-                st.link ? "up" : "down", st.speed, master);
+            char *disrupt = "";
+            if (pst.disrupt_active)
+                disrupt = " (disruptor active)";
+
+            char *inject = "";
+            if (pst.inject_active)
+                inject = " (injector active)";
+
+            LOG(ctx, "PHY %s: link=%s speed=%dMBit%s%s%s\n", port_names[port],
+                st.link ? "up" : "down", st.speed, master, disrupt, inject);
         }
 
         timer_start(ctx->check_links_timer, 2000);

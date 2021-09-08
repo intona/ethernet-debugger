@@ -141,6 +141,8 @@ static bool parse_value(struct logfn log, const char *name,
         return false;
     }
 
+    bool alias_match = false;
+
     if (el->type == JSON_TYPE_STRING && def->aliases) {
         for (size_t n = 0; def->aliases[n].user_val; n++) {
             if (strcasecmp(el->u.str, def->aliases[n].user_val) == 0) {
@@ -149,9 +151,15 @@ static bool parse_value(struct logfn log, const char *name,
                     .u.str = (char *)def->aliases[n].param_val,
                 };
                 el = &tmp;
+                alias_match = true;
                 break;
             }
         }
+    }
+
+    if ((def->flags & COMMAND_FLAG_ALIAS_ONLY) && !alias_match) {
+        logline(log, "error: %s must be one of the allowed strings.\n", name);
+        return false;
     }
 
     *data = (struct command_param){ .def = def };

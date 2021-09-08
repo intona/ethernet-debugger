@@ -68,6 +68,7 @@ struct options {
     bool strip_frames;
     bool capture_stats;
     char *init_cmds;
+    int64_t exit_on;
     bool print_version;
     char *extcap_version;
     bool extcap_interfaces;
@@ -111,6 +112,13 @@ const struct option_def option_list[] = {
         "Run a list of commands on start. Multiple commands can be separated "
         "with ; (needs spaces around it). If a command fails, exit with exit "
         "code 2."},
+    {"exit-on", offsetof(struct options, exit_on),
+        COMMAND_PARAM_TYPE_INT64,
+        "Control when to exit the program.",
+        PARAM_ALIASES({"default", "0", "Auto-exit with --wireshark only."},
+                      {"capture-end", "1", "Auto-exit if capturing ends."},
+                      {"never", "2", "Do not auto-exit."}),
+        .flags = COMMAND_FLAG_ALIAS_ONLY | COMMAND_FLAG_RUNTIME},
     // Also used by Wireshark extcap.
     {"fifo", offsetof(struct options, capture_to),
         COMMAND_PARAM_TYPE_STR,
@@ -192,7 +200,6 @@ struct nose_ctx {
     atomic_bool log_indirect;
     atomic_int log_r_len;
     bool mute_terminal;
-    bool exit_on_capture_stop;
     bool extcap_active;
     struct pipe *extcap_ctrl_in, *extcap_ctrl_out;
     char *fifo_path; // for delete-on-exit
@@ -674,7 +681,7 @@ static void grab_stop(struct nose_ctx *ctx)
         timer_destroy(ctx->grabber_status_timer);
         ctx->grabber_status_timer = NULL;
         LOG(ctx, "Capture thread stopped.\n");
-        if (ctx->exit_on_capture_stop)
+        if (ctx->opts.exit_on == 1)
             event_loop_request_terminate(ctx->ev);
         if (ctx->latency_tester_receiver) {
             LOG(ctx, "Receiver stopped. Ports will remain blocked.\n"
@@ -2645,19 +2652,24 @@ int main(int argc, char **argv)
         }
     }
 
+    bool exit_on_capture_stop = false;
+
     if (ctx->opts.run_wireshark) {
         if (!ctx->usb_dev)
             goto error_exit;
         if (!start_wireshark_etc(ctx))
             goto error_exit;
-        ctx->exit_on_capture_stop = true;
+        exit_on_capture_stop = true;
     }
 
     if (ctx->opts.capture_to[0]) {
         if (!grab_start(ctx, ctx->log, ctx->opts.capture_to))
             goto error_exit;
-        ctx->exit_on_capture_stop = true;
+        exit_on_capture_stop = true;
     }
+
+    if (exit_on_capture_stop && !ctx->opts.exit_on)
+        ctx->opts.exit_on = 1; // capture end
 
     if (ctx->opts.ipc_server[0]) {
         char *ipc_path = pipe_format_pipe_path(ctx->opts.ipc_server);

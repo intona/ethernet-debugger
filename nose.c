@@ -122,7 +122,8 @@ const struct option_def option_list[] = {
         "Control when to exit the program.",
         PARAM_ALIASES({"default", "0", "Auto-exit with --wireshark only."},
                       {"capture-end", "1", "Auto-exit if capturing ends."},
-                      {"never", "2", "Do not auto-exit."}),
+                      {"never", "2", "Do not auto-exit."},
+                      {"always", "3", "Exit after initialization."}),
         .flags = COMMAND_FLAG_ALIAS_ONLY | COMMAND_FLAG_RUNTIME},
     // Also used by Wireshark extcap.
     {"fifo", offsetof(struct options, capture_to),
@@ -2723,6 +2724,9 @@ int main(int argc, char **argv)
         LOG(ctx, "Nothing to do. Exiting.\n");
         event_loop_request_terminate(ev);
     }
+
+    if (ctx->opts.exit_on == 3)
+        event_loop_request_terminate(ctx->ev);
 
     event_loop_run(ev);
     event_loop_destroy(ev);

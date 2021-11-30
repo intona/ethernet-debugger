@@ -68,6 +68,7 @@ struct options {
     bool strip_frames;
     bool capture_stats;
     char *init_cmds;
+    char *post_init_cmds;
     int64_t exit_on;
     bool print_version;
     char *extcap_version;
@@ -112,6 +113,10 @@ const struct option_def option_list[] = {
         "Run a list of commands on start. Multiple commands can be separated "
         "with ; (needs spaces around it). If a command fails, exit with exit "
         "code 2."},
+    {"run", offsetof(struct options, post_init_cmds),
+        COMMAND_PARAM_TYPE_STR,
+        "Run a list of commands on start. See --cmd for syntax. Unlike --cmd, "
+        "these commands are run after performing initialization."},
     {"exit-on", offsetof(struct options, exit_on),
         COMMAND_PARAM_TYPE_INT64,
         "Control when to exit the program.",
@@ -2703,6 +2708,14 @@ int main(int argc, char **argv)
 #if HAVE_POSIX
     setup_signal_handler(ctx);
 #endif
+
+    if (ctx->opts.post_init_cmds[0]) {
+        int err = run_commands(ctx, ctx->opts.post_init_cmds);
+        if (err) {
+            flush_log(ctx);
+            exit(err);
+        }
+    }
 
     if (!ctx->num_clients && !ctx->ipc_server &&
         !(ctx->usb_dev && ctx->usb_dev->grabber))

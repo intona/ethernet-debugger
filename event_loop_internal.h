@@ -7,7 +7,7 @@
 
 // Static limit on total number of event loop objects.
 // For now, this simplifies a lot.
-#define MAX_ITEMS 10
+#define MAX_ITEMS 15
 #define MAX_MESSAGES 10
 
 #if !HAVE_POSIX

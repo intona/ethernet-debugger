@@ -70,6 +70,7 @@ struct options {
     char *init_cmds;
     char *post_init_cmds;
     int64_t exit_on;
+    int64_t exit_timeout;
     bool print_version;
     char *extcap_version;
     bool extcap_interfaces;
@@ -125,6 +126,11 @@ const struct option_def option_list[] = {
                       {"never", "2", "Do not auto-exit."},
                       {"always", "3", "Exit after initialization."}),
         .flags = COMMAND_FLAG_ALIAS_ONLY | COMMAND_FLAG_RUNTIME},
+    {"exit-timeout", offsetof(struct options, exit_timeout),
+        COMMAND_PARAM_TYPE_INT64,
+        "Exit after the given number of seconds has passed.",
+        PARAM_ALIASES({"never", "-1", "Disable timeout"}),
+        .irange = {-1, INT_MAX / 1000}},
     // Also used by Wireshark extcap.
     {"fifo", offsetof(struct options, capture_to),
         COMMAND_PARAM_TYPE_STR,
@@ -188,6 +194,7 @@ static const struct options option_defs = {
     .verbosity = 1,
     .softbuf = 512 * 1024 * 1024,
     .usbbuf = 2 * 1024 * 1024,
+    .exit_timeout = -1,
 };
 
 struct nose_ctx {
@@ -199,6 +206,7 @@ struct nose_ctx {
     struct device *usb_dev;
     struct timer *check_links_timer;
     struct timer *grabber_status_timer;
+    struct timer *exit_timer;
     struct grabber_status grabber_status_prev;
     struct pipe *ipc_server;
     struct pipe *signalfd;
@@ -2562,6 +2570,14 @@ static void on_terminate(void *ud, struct event_loop *ev)
     event_loop_exit(ctx->ev);
 }
 
+static void on_exit_timer(void *ud, struct timer *t)
+{
+    struct nose_ctx *ctx = ud;
+
+    LOG(ctx, "Exiting because timeout elapsed.\n");
+    event_loop_request_terminate(ctx->ev);
+}
+
 int main(int argc, char **argv)
 {
     struct event_loop *ev = event_loop_create();
@@ -2727,6 +2743,12 @@ int main(int argc, char **argv)
 
     if (ctx->opts.exit_on == 3)
         event_loop_request_terminate(ctx->ev);
+
+    if (ctx->opts.exit_timeout >= 0) {
+        ctx->exit_timer = event_loop_create_timer(ctx->ev);
+        timer_set_on_timer(ctx->exit_timer, ctx, on_exit_timer);
+        timer_start(ctx->exit_timer, ctx->opts.exit_timeout * 1000);
+    }
 
     event_loop_run(ev);
     event_loop_destroy(ev);

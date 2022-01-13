@@ -2646,7 +2646,7 @@ int main(int argc, char **argv)
         run_init_and_test(ctx->global, ctx->opts.device, ctx->opts.init_serial);
 
     if (ctx->opts.init_serial[0]) {
-        LOG(ctx, "Using --selftest-serial requires --selftest.");
+        LOG(ctx, "Using --selftest-serial requires --selftest.\n");
         goto error_exit;
     }
 

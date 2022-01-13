@@ -16,7 +16,8 @@ and the full license text: https://www.gnu.org/licenses/gpl-3.0.html
 Documentation
 =============
 
-The complete user-guide is located here: https://intona.eu/doc/ethernet-debugger
+The complete Ethernet Debugger User Guide is located here:
+https://intona.eu/doc/ethernet-debugger
 
 Build instructions
 ==================
@@ -97,7 +98,8 @@ You can for example do (after "nose" is installed)::
 See the Wireshark documentation for details about extcap:
 https://www.wireshark.org/docs/wsdg_html_chunked/ChCaptureExtcap.html
 
-See the Ethernet Debugger Guide for details and information about other OSes.
+See the `Ethernet Debugger User Guide <https://intona.eu/doc/ethernet-debugger>`_
+for details and information about other OSes.
 
 Usage instructions
 ==================
@@ -110,3 +112,5 @@ There are multiple ways to start capture:
   missing)
 - starting nose manually (see nose --help, and the --fifo option)
 
+See the `Ethernet Debugger User Guide <https://intona.eu/doc/ethernet-debugger>`_
+for details.

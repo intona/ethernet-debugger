@@ -158,7 +158,9 @@ static bool parse_value(struct logfn log, const char *name,
     }
 
     if ((def->flags & COMMAND_FLAG_ALIAS_ONLY) && !alias_match) {
-        logline(log, "error: %s must be one of the allowed strings.\n", name);
+        logline(log, "error: %s must be one of the allowed strings:\n", name);
+        for (size_t n = 0; def->aliases && def->aliases[n].user_val; n++)
+            logline(log, "   %s\n", def->aliases[n].user_val);
         return false;
     }
 

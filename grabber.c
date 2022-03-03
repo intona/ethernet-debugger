@@ -28,6 +28,34 @@
 #define O_BINARY 0
 #endif
 
+struct sc_info {
+    uint16_t payload_bytecount;
+    uint16_t magic;
+    uint32_t timestamp_high;
+    uint32_t timestamp_low;
+    uint32_t packet_counter;
+    uint32_t calculated_fcs;
+    uint16_t interpacket_frame_gap;
+    // bits 13-0: byte error count
+    // bit 14: overflow
+    // bit 15: fcs error
+    uint16_t errors;
+};
+
+static_assert(sizeof(struct sc_info) == 4 * 5 + 2 * 2, "alignment?");
+
+#define SC_INFO_TIMESTAMP(inf) ((((uint64_t)(inf).timestamp_high) << 32) | \
+                                (inf).timestamp_low)
+
+struct packet_footer {
+    uint16_t magic;
+    uint16_t seq_counter;
+    uint16_t flags;
+    uint16_t last_frame_ptr;
+};
+
+static_assert(sizeof(struct packet_footer) == 8, "???");
+
 // Maximum size of what can come through the endpoints. (Upper bound, see
 // PACKED_CNT_MAX in FPGA.)
 #define MAX_HW_PACKET_SIZE (16 * 1024)
@@ -109,34 +137,6 @@ struct grabber {
 };
 
 static const int EPs[2] = {0x81, 0x82};
-
-struct sc_info {
-    uint16_t payload_bytecount;
-    uint16_t magic;
-    uint32_t timestamp_high;
-    uint32_t timestamp_low;
-    uint32_t packet_counter;
-    uint32_t calculated_fcs;
-    uint16_t interpacket_frame_gap;
-    // bits 13-0: byte error count
-    // bit 14: overflow
-    // bit 15: fcs error
-    uint16_t errors;
-};
-
-static_assert(sizeof(struct sc_info) == 4 * 5 + 2 * 2, "alignment?");
-
-#define SC_INFO_TIMESTAMP(inf) ((((uint64_t)(inf).timestamp_high) << 32) | \
-                                (inf).timestamp_low)
-
-struct packet_footer {
-    uint16_t magic;
-    uint16_t seq_counter;
-    uint16_t flags;
-    uint16_t last_frame_ptr;
-};
-
-static_assert(sizeof(struct packet_footer) == 8, "???");
 
 static void write_pcapng_block_size(struct wbuf *w, size_t start)
 {

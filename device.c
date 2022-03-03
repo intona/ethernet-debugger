@@ -676,7 +676,7 @@ int device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
         size += 8; // preamble, SFD
     }
 
-    if (size > DEV_INJECT_MAX_PKT_SIZE) {
+    if (size > DEV_INJECT_ETH_BUF_SIZE) {
         logline(logfn, "error: packet too large\n");
         return -1;
     }

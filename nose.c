@@ -1916,7 +1916,7 @@ static void on_extcap_ctrl_out(void *ud, struct pipe *p, unsigned events)
 
 const struct command_def command_list[] = {
     {"help", "List commands", cmd_help, {
-        {"command", COMMAND_PARAM_TYPE_STR, "all", "show help for specific command"}, }},
+        {"search", COMMAND_PARAM_TYPE_STR, "all", "show help for specific command"}, }},
     {"device_open", "Open USB device", cmd_dev_open, {
         {"name", COMMAND_PARAM_TYPE_STR, "default", "device name",
             .completer = complete_dev_name,

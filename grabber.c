@@ -676,7 +676,7 @@ static void decode_packed_frames(struct grabber *gr, int interface,
             if (info.payload_bytecount >= sizeof(fifo->split_buf)) {
                 HINT(gr, "port %u: error: discarding packet with broken frame size\n",
                      fifo->interface);
-                return;
+                info.payload_bytecount = sizeof(fifo->split_buf);
             }
             int32_t psize = (info.payload_bytecount + 3) & (~(size_t)3);
             if (psize > pos - sizeof(info))
@@ -692,7 +692,7 @@ static void decode_packed_frames(struct grabber *gr, int interface,
         if (sizeof(fifo->split_buf) - fifo->split_buf_size < pos) {
             HINT(gr, "port %u: error: discarding packet with overlong split frame (head)\n",
                  fifo->interface);
-            return;
+            fifo->split_buf_size = sizeof(fifo->split_buf) - pos;
         }
         memcpy(fifo->split_buf + fifo->split_buf_size, buf, pos);
         fifo->split_buf_size += pos;

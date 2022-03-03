@@ -59,12 +59,14 @@ static_assert(sizeof(struct packet_footer) == 8, "???");
 // Maximum size of what can come through the endpoints. (Upper bound, see
 // PACKED_CNT_MAX in FPGA.)
 #define MAX_HW_PACKET_SIZE (16 * 1024)
-// Maximum USB frame size that we assume is somehow possible.
+// Upper bound on USB frame size that we assume is somehow possible.
 #define MAX_USB_FRAME_SIZE MAX_HW_PACKET_SIZE
-// Maximum ethernet frame size we assume is somehow possible. (This could be
-// larger or smaller than the USB frame size, because we can merge or split
-// ethernet frames to USB frames.)
-#define MAX_ETH_FRAME_SIZE MAX_HW_PACKET_SIZE
+// Maximum ethernet frame size we accept. This can be both larger or smaller
+// than the USB frame size, because an USB frame can contain multiple full or
+// partial ethernet frames. In theory, the mechanism allows for endless ethernet
+// frames, while in practice ethernet sets the limit at something below 10KB.
+// Allow some headroom for observing out-of-spec behavior.
+#define MAX_ETH_FRAME_SIZE (20 * 1024)
 
 // Maximum number of ethernet frames the HW could possibly put into a USB packet.
 // (Some may be partial packets.)
@@ -105,7 +107,7 @@ struct packet_fifo {
     // and can stream the payload directly to the data ring buffer (this is also
     // why these ring buffers are separate), but this was abandoned due to
     // complexity.
-    uint8_t split_buf[MAX_ETH_FRAME_SIZE];
+    uint8_t split_buf[MAX_ETH_FRAME_SIZE + sizeof(struct sc_info)];
     size_t split_buf_size;
 };
 

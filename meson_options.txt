@@ -1,0 +1,1 @@
+option('readline', type : 'boolean', value : true)

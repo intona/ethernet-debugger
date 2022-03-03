@@ -49,13 +49,15 @@ else
     sources += 'event_loop_posix.c'
 endif
 
-readline = dependency('readline', required: false)
+if get_option('readline')
+    readline = dependency('readline', required: false)
 
-if readline.found()
-    deps += readline
-    cflags += ['-DHAVE_READLINE=1']
-else
-    cflags += ['-DHAVE_READLINE=0']
+    if readline.found()
+        deps += readline
+        cflags += ['-DHAVE_READLINE=1']
+    else
+        cflags += ['-DHAVE_READLINE=0']
+    endif
 endif
 
 sources += vcs_tag(command: ['git', 'describe', '--always', '--tags'],

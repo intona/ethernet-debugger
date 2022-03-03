@@ -32,6 +32,7 @@ Requirements:
 - meson 0.53.0 (older releases might work, but they're usually plagued by bugs)
   (use your package manager, or "pip3 install meson" / "pip install meson")
 - little endian build target
+- libreadline (optional, can be disabled by passing -Dreadline=false to meson)
 
 The following command should be sufficient to install the dependencies on
 Ubuntu::

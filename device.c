@@ -895,7 +895,7 @@ int device_get_port_state(struct logfn logfn, struct device *dev, unsigned port,
         goto error;
 
     bool inj_active = regs[0];
-    state->inject_active = inj_active ? regs[2] : 0;
+    state->inject_active = inj_active ? (regs[2] | (regs[1] & 1)) : 0;
     state->inject_count = regs[1] / 2;
     state->inject_dropped = regs[3];
 

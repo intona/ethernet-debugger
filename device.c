@@ -393,13 +393,21 @@ struct device *device_open_with_handle(struct global *global,
     if (libusb_get_device_descriptor(libusb_get_device(udev), &desc))
         goto fail;
 
+    dev->fw_version = desc.bcdDevice;
+
+    char name[USB_DEVICE_NAME_LEN];
+    usb_get_device_name(libusb_get_device(udev), name, sizeof(name));
+    char serial[USB_DEVICE_SERIAL_LEN];
+    usb_get_device_serial(libusb_get_device(udev), serial, sizeof(serial));
+    LOG(global, "Device %s / %s (firmware %d.%02d) opened.\n", serial, name,
+        dev->fw_version >> 8, dev->fw_version & 0xFF);
+
     uint8_t major_dev_ver = desc.bcdDevice >> 8;
     if (major_dev_ver > 1) {
         LOG(global, "Unsupported device: device version is %d, but this software "
                     "supports only version 1. Outdated software?\n", major_dev_ver);
         goto fail;
     }
-    dev->fw_version = desc.bcdDevice;
 
     dev->cfg_in = (struct usb_ep){
         .dev = udev,
@@ -522,12 +530,6 @@ struct device *device_open(struct global *global, const char *devname)
     }
 
     usb_thread_device_ref(global->usb_thr, handle);
-
-    char name[USB_DEVICE_NAME_LEN];
-    usb_get_device_name(libusb_get_device(handle), name, sizeof(name));
-    char serial[USB_DEVICE_SERIAL_LEN];
-    usb_get_device_serial(libusb_get_device(handle), serial, sizeof(serial));
-    LOG(global, "Device %s / %s opened.\n", serial, name);
 
     return device_open_with_handle(global, handle);
 }

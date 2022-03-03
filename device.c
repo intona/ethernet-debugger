@@ -784,7 +784,7 @@ int device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
 
         // Upload packet data.
         uint32_t addr = reg_base + 0x100 + offset / 4;
-        if (!regs_write(logfn, dev, addr, (uint32_t *)data, full_size))
+        if (!regs_write(logfn, dev, addr, (uint32_t *)data, full_size / 4))
             goto error;
 
         // Send enable if wanted.

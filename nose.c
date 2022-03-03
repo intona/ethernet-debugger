@@ -2713,7 +2713,14 @@ int main(int argc, char **argv)
         ctx->opts.exit_on = 1; // capture end
 
     if (ctx->opts.ipc_server[0]) {
-        char *ipc_path = pipe_format_pipe_path(ctx->opts.ipc_server);
+        char *ipc_path = NULL;
+        if (strchr(ctx->opts.ipc_server, '/') ||
+            strchr(ctx->opts.ipc_server, '\\'))
+        {
+            ipc_path = xstrdup(ctx->opts.ipc_server);
+        } else {
+            ipc_path = pipe_format_pipe_path(ctx->opts.ipc_server);
+        }
         ctx->ipc_server = event_loop_open_pipe(ctx->ev, ipc_path, PIPE_FLAG_SERVE);
         if (!ctx->ipc_server) {
             LOG(ctx, "error: creating IPC server failed.\n");

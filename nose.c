@@ -323,6 +323,11 @@ static char *cb_completion(const char *text, int state)
     return xstrdup(ctx->readline_completion[state]);
 }
 
+static int dummy_hook(int a, int b)
+{
+    return 0;
+}
+
 static void init_readline(struct nose_ctx *ctx, struct pipe *p)
 {
     if (cb_rl_nose_ctx)
@@ -341,6 +346,20 @@ static void init_readline(struct nose_ctx *ctx, struct pipe *p)
     rl_input_available_hook = cb_rl_input_available_hook;
     rl_getc_function = cb_rl_getc_function;
     rl_callback_handler_install("> ", cb_rl_handler);
+
+    // libreadline 8.1: bracketed pasting, although a good idea, is implemented
+    // in a way that expects the getc callback to block. We can't block, and
+    // return EOF if the buffer is empty. This in turn makes rl_read_key() an
+    // error, which in turn makes _rl_bracketed_text() return a string that is
+    // not 0-terminated string due to buggy partial error handling. It will
+    // either insert some uninitialized data, or crash. This is both a
+    // libreadline design- and implementation bug.
+    rl_variable_bind("enable-bracketed-paste", "off");
+    // And for some reason, the above is not enough. Possibly, the terminal or
+    // shell always enable this mode, and above doesn't disable the parsing of
+    // the escapes.
+    rl_bind_keyseq("\033[200~", dummy_hook);
+    rl_bind_keyseq("\033[201~", dummy_hook);
 
     rl_initialize();
     using_history();

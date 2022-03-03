@@ -204,8 +204,12 @@ static void *usb_thread(void *arg)
     struct usb_thread *ctx = arg;
 
     while (1) {
-        if (ctx->terminate && usb_cancel_all(ctx))
-            break;
+        if (ctx->terminate) {
+            if (usb_cancel_all(ctx))
+                break;
+            // See apology in usb_thread_destroy().
+            nanosleep(&(struct timespec){.tv_nsec = 3 * 1000 * 1000}, NULL);
+        }
 
         gc_dead_devs(ctx);
 
@@ -271,12 +275,16 @@ void usb_thread_destroy(struct usb_thread *ctx)
 
     // Make it act on ctx->terminate. This is pretty crap, but I did not find
     // a better way that would work with multiple event handlers.
+    // The loop and the waits are (normally unacceptable) workarounds for
+    // libusb restrictions, bugs (libusb or my own), or misunderstandings.
     while (!ctx->terminating) {
         if (libusb_try_lock_events(ctx->usb_ctx) == 0) {
             ctx->interrupt = 1;
             libusb_unlock_events(ctx->usb_ctx);
+            break;
         }
         libusb_interrupt_event_handler(ctx->usb_ctx);
+        nanosleep(&(struct timespec){.tv_nsec = 1 * 1000 * 1000}, NULL);
     }
 
     pthread_join(ctx->thread, NULL);

@@ -657,10 +657,13 @@ void command_list_help(const struct command_def *cmds, struct logfn lfn,
             char aliases[80] = {0};
             int o = 0;
             for (size_t n = 0; def->aliases && def->aliases[n].user_val; n++) {
-                o = snprintf_append(aliases, sizeof(aliases), o, "%s%s (%s)",
+                o = snprintf_append(aliases, sizeof(aliases), o, "%s%s",
                                     n ? ", " : "",
-                                    def->aliases[n].user_val,
-                                    def->aliases[n].param_val);
+                                    def->aliases[n].user_val);
+                if (!(def->flags & COMMAND_FLAG_ALIAS_ONLY)) {
+                    o = snprintf_append(aliases, sizeof(aliases), o, " (%s)",
+                                        def->aliases[n].param_val);
+                }
             }
             if (o > 0)
                 logline(lfn, "    %-17s Special values: %s\n", "", aliases);

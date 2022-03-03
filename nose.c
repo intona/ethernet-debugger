@@ -2736,14 +2736,14 @@ int main(int argc, char **argv)
         cl->exit_on_close = true;
     }
 
+#if HAVE_POSIX
+    setup_signal_handler(ctx);
+#endif
+
     if (!ctx->extcap_active) {
         struct pipe *p = event_loop_open_pipe(ctx->ev, "/dev/stdin", PIPE_FLAG_READ);
         add_client(ctx, p, true);
     }
-
-#if HAVE_POSIX
-    setup_signal_handler(ctx);
-#endif
 
     if (ctx->opts.post_init_cmds[0]) {
         int err = run_commands(ctx, ctx->opts.post_init_cmds);

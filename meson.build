@@ -37,6 +37,7 @@ sources = [
     'init_and_test.c',
     'json-parser/json.c',
     'json-parser/json_helpers.c',
+    'json-parser/json_helpers_malloc.c',
     'json-parser/json_out.c',
 ]
 

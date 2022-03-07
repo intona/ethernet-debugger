@@ -8,6 +8,7 @@
 #include "cmd_parser.h"
 #include "json.h"
 #include "json_helpers.h"
+#include "json_helpers_malloc.h"
 #include "json_out.h"
 #include "utils.h"
 
@@ -279,7 +280,6 @@ static const struct command_def *find_cmd(const struct command_def *cmds,
 void command_dispatch(const struct command_def *cmds, struct command_ctx *ctx,
                       const char *cmd)
 {
-    char mem[8192];
     struct json_tok *jcmd = NULL;
     char **args = NULL;
     const char *cmdname = NULL;
@@ -293,14 +293,12 @@ void command_dispatch(const struct command_def *cmds, struct command_ctx *ctx,
             .msg_cb = json_log,
             .msg_cb_opaque = &ctx->log,
         };
-        struct json_tok *obj = json_parse(cmd, mem, sizeof(mem), &jopts);
-        if (!obj || obj->type != JSON_TYPE_OBJECT)
+        jcmd = json_parse_malloc(cmd, &jopts);
+        if (!jcmd || jcmd->type != JSON_TYPE_OBJECT)
             goto done;
 
-        cmdname = json_get_string(obj, "command", "");
-        ctx->seq_id = json_get_double(obj, "id", -1);
-
-        jcmd = obj;
+        cmdname = json_get_string(jcmd, "command", "");
+        ctx->seq_id = json_get_double(jcmd, "id", -1);
     } else {
         args = split_spaces_with_quotes(cmd, NULL);
         cmdname = args ? args[0] : NULL;
@@ -455,6 +453,8 @@ done:
         json_out_field_bool(ctx->jout, "success", ctx->success);
         json_out_object_end(ctx->jout);
     }
+
+    json_free(jcmd);
 
     for (size_t n = 0; args && args[n]; n++)
         free(args[n]);

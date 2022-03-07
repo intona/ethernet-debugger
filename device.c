@@ -964,3 +964,13 @@ int device_setting_write(struct logfn logfn, struct device *dev, uint32_t id,
     device_cfg_unlock(dev);
     return r;
 }
+
+void print_fw_update_instructions(struct logfn logfn, struct device *dev)
+{
+    logline(logfn, "To update the firmware, follow the instructions here:\n  %s\n",
+            "https://intona.eu/en/doc/ethernet-debugger/#IN3032UG:EthernetDebuggerUserGuide-FirmwareUpdate");
+    logline(logfn, "Firmware images are available for download here:\n  %s\n",
+            "https://intona.eu/en/products/ethernet-debugger#downloads");
+    logline(logfn, "The firmware version on this device is: %d.%02d\n",
+            dev->fw_version >> 8, dev->fw_version & 0xFF);
+}

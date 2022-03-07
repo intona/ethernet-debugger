@@ -240,4 +240,6 @@ struct device *device_open_with_handle(struct global *global,
 // Must be called on main thread; everything must have been stopped.
 void device_close(struct device *dev);
 
+void print_fw_update_instructions(struct logfn logfn, struct device *dev);
+
 #endif

@@ -635,14 +635,21 @@ static void on_check_links(void *ud, struct timer *t)
         speed[port - 1] = st.link ? st.speed : 0;
     }
 
-    if (speed[0] == 10 || speed[1] == 10) {
-        LOG(ctx, "Warning: 10Mbit mode is not supported.\n");
-    } else if (speed[0] && speed[1] && speed[0] != speed[1]) {
+    if (speed[0] && speed[1] && speed[0] != speed[1]) {
         LOG(ctx, "Warning: links have different speed. Communication is blocked.\n");
     } else if (!speed[0] != !speed[1]) {
         LOG(ctx, "Warning: only one port has a link.\n");
     } else if (!speed[0] && !speed[1]) {
         LOG(ctx, "Warning: no link.\n");
+    } else if (speed[0] == 10 || speed[0] == 100) {
+        if (dev->fw_version <= 0x106) {
+            LOG(ctx, "This version of the firmware has known problems with %d "
+                "MBit mode. Updating to the latest firmware release is "
+                "recommended.\n", speed[0]);
+            print_fw_update_instructions(ctx->log, dev);
+        } else if (speed[0] == 10) {
+            LOG(ctx, "Warning: 10Mbit mode is not fully supported.\n");
+        }
     }
 }
 

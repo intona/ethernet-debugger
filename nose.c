@@ -254,6 +254,20 @@ struct client {
 
 static void process_command(struct nose_ctx *ctx, char *cmd, struct pipe *p);
 
+// Speed mode names/descriptions, indexed by raw DEVICE_SETTING_SPEED_MODE.
+// Beware that future firmware versions might add new values.
+// The cmd_set_speed declaration duplicates some of these.
+static const char* const speed_mode_settings_desc[] = {
+    "same (try to force a speed mode that works on both links)",
+    "10 (10MBit full duplex)",
+    "100 (100MBit full duplex)",
+    "1000 (1000MBit full duplex)",
+    "manual (reset PHYs to independent auto-negotiation and don't touch them)",
+    "10half (10MBit half duplex)",
+    "100half (100MBit half duplex)",
+    "1000half (1000MBit half duplex)",
+};
+
 #if HAVE_READLINE
 
 static struct nose_ctx *cb_rl_nose_ctx;
@@ -1129,38 +1143,26 @@ static void cmd_set_speed(struct command_ctx *cctx, struct command_param *params
     if (!dev)
         return;
 
-    const char *mode = params[0].p_str;
-    int speed = 0;
-    int autoneg = 0;
-    int fw_speed_mode = -1;
-    if (strcmp(mode, "1000") == 0) {
-        speed = 2;
-        fw_speed_mode = 3;
-    } else if (strcmp(mode, "100") == 0) {
-        speed = 1;
-        fw_speed_mode = 2;
-    } else if (strcmp(mode, "10") == 0) {
-        speed = 0;
-        fw_speed_mode = 1;
-    } else if (strcmp(mode, "manual") == 0 || strcmp(mode, "auto") == 0) {
-        // "manual" is preferred; "auto" is supported for compatibility
-        autoneg = 1;
-        fw_speed_mode = 4;
-    } else if (strcmp(mode, "same") == 0) {
-        if (dev->fw_version < 0x106) {
-            LOG(cctx, "this mode is not supported with this firmware version"
-                      " (a free update is available from Intona)\n");
-            cctx->success = false;
-        }
-        fw_speed_mode = 0;
-    } else {
-        LOG(cctx, "argument must be one of: 10 100 1000 same manual\n");
+    int fw_speed_mode = params[0].p_int;
+
+    if ((dev->fw_version < 0x108 && fw_speed_mode > 4) ||
+        (dev->fw_version < 0x106 && fw_speed_mode == 0))
+    {
+        LOG(cctx, "this mode is not supported with this firmware version\n");
+        print_fw_update_instructions(cctx->log, dev);
         cctx->success = false;
         return;
     }
 
     int r;
     if (dev->fw_version < 0x106) {
+        int speed = 0;
+        int autoneg = 0;
+        if (fw_speed_mode == 4) {
+            autoneg = 1;
+        } else {
+            speed = fw_speed_mode - 1;
+        }
         uint16_t v = (1 << 15) |                // reset
                      ((!!(speed & 1)) << 13) |  // speed select
                      (!!((speed & 2)) << 6) |
@@ -1174,7 +1176,8 @@ static void cmd_set_speed(struct command_ctx *cctx, struct command_param *params
     }
 
     if (r >= 0) {
-        LOG(cctx, "setting speed to %s\n", mode);
+        LOG(cctx, "setting speed to %s\n",
+            speed_mode_settings_desc[fw_speed_mode]);
     } else {
         LOG(cctx, "error %d\n", r);
         cctx->success = false;
@@ -1453,15 +1456,11 @@ static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
                                 &fw_mode);
 
         const char *name = NULL;
-        switch (fw_mode) {
-        case 0:  name = "same (force speed to PHY with lowest speed)"; break;
-        case 1:  name = "10MBit"; break;
-        case 2:  name = "100MBit"; break;
-        case 3:  name = "1000MBit"; break;
-        case 4:  name = "manual (starts out with independent auto-negotiation)"; break;
-        }
-        if (r < 0)
+        if (r < 0) {
             name = "(failed to read setting)";
+        } else if (fw_mode < ARRAY_LENGTH(speed_mode_settings_desc)) {
+            name = speed_mode_settings_desc[fw_mode];
+        }
         char buf[30];
         if (!name)
             snprintf(buf, sizeof(buf), "unknown (%"PRIu32")", fw_mode);
@@ -1960,7 +1959,18 @@ const struct command_def command_list[] = {
             .irange = {-1, 255}},
     }},
     {"speed", "Set Ethernet speed on both ports", cmd_set_speed, {
-        {"speed", COMMAND_PARAM_TYPE_STR, NULL, "one of 10, 100, 1000, same, manual"}, }},
+        {"speed", COMMAND_PARAM_TYPE_INT64, NULL, "speed mode",
+            // also see speed_mode_settings_desc[]
+            PARAM_ALIASES({"same", "0"},
+                          {"10", "1"},
+                          {"100", "2"},
+                          {"1000", "3"},
+                          {"10half", "5"},
+                          {"100half", "6"},
+                          {"1000half", "7"},
+                          {"manual", "4"}),
+            .flags = COMMAND_FLAG_ALIAS_ONLY},
+    }},
     {"block_ports", "Port blocker", cmd_block_ports, {
         PHY_SELECT }},
     {"disrupt", "Packet disruptor", cmd_disrupt, {

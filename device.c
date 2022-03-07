@@ -666,6 +666,11 @@ int device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
         return -1;
     }
 
+    if (dev->fw_version < 0x107 && params->loop_count) {
+        logline(logfn, "error: firmware version too old\n");
+        return -1;
+    }
+
     size_t size = params->data_size;
     size += params->append_random;
     size += params->append_zero;
@@ -782,9 +787,12 @@ int device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
             repeat,                 // packet_repeat
             gap,                    // packet_gap
             corrupt_at,             // packet_err_offset
+            offset + params->loop_offset,
+            params->loop_count,
         };
+        size_t reg_count = dev->fw_version >= 0x107 ? 8 : 6;
 
-        if (!regs_write(logfn, dev, reg_base, regs, ARRAY_LENGTH(regs)))
+        if (!regs_write(logfn, dev, reg_base, regs, reg_count))
             goto error;
 
         // Upload packet data.

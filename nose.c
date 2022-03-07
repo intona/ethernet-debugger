@@ -1361,6 +1361,8 @@ static void cmd_inject(struct command_ctx *cctx, struct command_param *params,
         .gap            = params[4].p_int,
         .append_random  = params[5].p_int,
         .append_zero    = params[6].p_int,
+        .loop_count     = params[9].p_int,
+        .loop_offset    = params[10].p_int,
     };
     int64_t corrupt = params[7].p_int;
     if (corrupt >= 0) {
@@ -2039,6 +2041,13 @@ const struct command_def command_list[] = {
             .irange = {-1, UINT32_MAX}},
         {"file", COMMAND_PARAM_TYPE_STR, "",
             "send packet loaded from file"},
+        {"loop-count", COMMAND_PARAM_TYPE_INT64, "0",
+            "repeat packet data at end of packet",
+            PARAM_ALIASES({"inf", "4294967295"}),
+            .irange = {0, UINT32_MAX}},
+        {"loop-offset", COMMAND_PARAM_TYPE_INT64, "0",
+            "repeat packet data at this offset",
+            .irange = {0, DEV_INJECT_ETH_BUF_SIZE}},
     }},
     {"inject_stop", "Disable packet injector", cmd_inject_stop, {
         PHY_SELECT_DEF("AB"),

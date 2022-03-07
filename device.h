@@ -92,6 +92,10 @@ struct device_inject_params {
     uint32_t gap;           // 0 uses default
     uint32_t corrupt_at;    // make PHY emit invalid ethernet symbol here
                             // ignored if enable_corrupt==false
+    // added in firmware 1.08
+    uint32_t loop_offset;   // byte offset from which to loop packet data
+    uint32_t loop_count;    // number of times to loop packet data
+                            // (UINT32_MAX for infinite, 0 to disable)
 };
 
 // Send packet injector command.

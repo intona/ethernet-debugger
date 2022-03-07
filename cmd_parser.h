@@ -34,7 +34,7 @@ enum command_flags {
                                          // list, reject all others
 };
 
-#define COMMAND_MAX_PARAMS 10
+#define COMMAND_MAX_PARAMS 15
 
 struct command_alias_val {
     const char *user_val;

@@ -885,6 +885,8 @@ error:
 int device_get_port_state(struct logfn logfn, struct device *dev, unsigned port,
                           struct device_port_state *state)
 {
+    *state = (struct device_port_state){0};
+
     if ((port != DEV_PORT_A && port != DEV_PORT_B) || dev->fw_version < 0x106)
         return -1;
 
@@ -908,6 +910,15 @@ int device_get_port_state(struct logfn logfn, struct device *dev, unsigned port,
 
     state->disrupt_active = regs[1];
     state->disrupt_affected = regs[0];
+
+    if (dev->fw_version >= 0x107) {
+        reg_base = (6 + portidx) << 20;
+        if (!regs_read(logfn, dev, reg_base + 1, regs, 3))
+            goto error;
+
+        state->packets = regs[0];
+        state->sym_error_bytes = regs[2];
+    }
 
     ret = 0;
 error:

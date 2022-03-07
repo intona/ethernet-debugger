@@ -135,6 +135,9 @@ struct device_port_state {
     uint32_t inject_dropped;    // # packets dropped because injection was active
     uint32_t disrupt_active;    // # packets still to disrupt (UINT32_MAX = inf)
     uint32_t disrupt_affected;  // # packets that got disrupted (mod 2^32)
+    // added in firmware 1.07
+    uint32_t packets;           // # packets (at port entry)
+    uint32_t sym_error_bytes;   // # bytes that had a symbol error
 };
 
 // Read some packet disruptor state.

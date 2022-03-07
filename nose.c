@@ -1505,6 +1505,13 @@ static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
                 continue;
             }
 
+            if (dev->fw_version >= 0x107) {
+                LOG(cctx, "    Packets (mod 2^31): %"PRIu32"\n",
+                    state.packets);
+                LOG(cctx, "    Symbol error bytes (mod 2^31): %"PRIu32"\n",
+                    state.sym_error_bytes);
+            }
+
             if (state.inject_active) {
                 LOG(cctx, "    Injector packets to inject: %s\n",
                     NUM32_OR_INF(state.inject_active));

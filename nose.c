@@ -661,8 +661,6 @@ static void on_check_links(void *ud, struct timer *t)
                 "MBit mode. Updating to the latest firmware release is "
                 "recommended.\n", speed[0]);
             print_fw_update_instructions(ctx->log, dev);
-        } else if (speed[0] == 10) {
-            LOG(ctx, "Warning: 10Mbit mode is not fully supported.\n");
         }
     }
 }

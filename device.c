@@ -248,6 +248,7 @@ static void *irq_thread(void *p)
                     case 2: st->speed = 1000; break;
                     }
                 }
+                st->duplex = regs[phy] & (1 << 13);
                 st->master = -1;
                 if (st->speed == 1000 && reg10[phy] >= 0)
                     st->master = reg10[phy] & (1 << 14);

@@ -669,7 +669,10 @@ static void on_phy_change(void *ud, struct event *ev)
         struct phy_status st;
         device_get_phy_status(dev, port, &st);
 
-        if (pst.link != st.link || pst.speed != st.speed) {
+        if (pst.link != st.link ||
+            pst.speed != st.speed ||
+            pst.duplex != st.duplex)
+        {
             ctx->num_link_changes[port - 1]++;
 
             if (st.link) {
@@ -704,8 +707,12 @@ static void on_phy_change(void *ud, struct event *ev)
             if (pst.inject_active)
                 inject = " (injector active)";
 
-            LOG(ctx, "PHY %s: link=%s speed=%dMBit%s%s%s\n", port_names[port],
-                st.link ? "up" : "down", st.speed, master, disrupt, inject);
+            char *duplex = "";
+            if (st.speed && !st.duplex)
+                duplex = " half-duplex";
+
+            LOG(ctx, "PHY %s: link %s %dMBit%s%s%s%s\n", port_names[port],
+                st.link ? "up" : "down", st.speed, duplex, master, disrupt, inject);
         }
 
         timer_start(ctx->check_links_timer, 2000);

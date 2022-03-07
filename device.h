@@ -182,6 +182,7 @@ void device_cfg_unlock(struct device *dev);
 
 struct phy_status {
     bool link;
+    bool duplex; // true=>full duplex (valid only if speed valid)
     int speed; // 10/100/1000, 0 if not established
     int master;
 };

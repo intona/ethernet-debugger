@@ -702,6 +702,8 @@ static void on_phy_change(void *ud, struct event *ev)
     }
 
     if (any_link_changes) {
+        bool both_1000_fd = true;
+
         for (int port = 1; port <= 2; port++) {
             struct phy_status st = ctx->prev_phy_st[port - 1];
 
@@ -725,8 +727,20 @@ static void on_phy_change(void *ud, struct event *ev)
             if (st.speed && !st.duplex)
                 duplex = " half-duplex";
 
+            both_1000_fd &= st.speed == 1000 && st.duplex;
+
             LOG(ctx, "PHY %s: link %s %dMBit%s%s%s%s\n", port_names[port],
                 st.link ? "up" : "down", st.speed, duplex, master, disrupt, inject);
+        }
+
+        uint32_t fw_mode;
+        int r = device_setting_read(ctx->log, dev, DEVICE_SETTING_SPEED_MODE,
+                                    &fw_mode);
+
+        if (r >= 0 && fw_mode < ARRAY_LENGTH(speed_mode_settings_desc) &&
+            fw_mode != 0 && !both_1000_fd)
+        {
+            LOG(ctx, "Forced speed: %s\n", speed_mode_settings_desc[fw_mode]);
         }
 
         timer_start(ctx->check_links_timer, 2000);

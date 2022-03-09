@@ -273,6 +273,11 @@ void usb_thread_destroy(struct usb_thread *ctx)
 
     ctx->terminate = true;
 
+    pthread_mutex_lock(&ctx->lock);
+    for (size_t n = 0; n < ctx->num_eps; n++)
+        assert(!ctx->eps[n]->ep); // all EPs must have been removed
+    pthread_mutex_unlock(&ctx->lock);
+
     // Make it act on ctx->terminate. This is pretty crap, but I did not find
     // a better way that would work with multiple event handlers.
     // The loop and the waits are (normally unacceptable) workarounds for
@@ -290,14 +295,10 @@ void usb_thread_destroy(struct usb_thread *ctx)
     pthread_join(ctx->thread, NULL);
 
     pthread_mutex_lock(&ctx->lock);
-    while (ctx->num_eps) {
-        bool r = ep_maybe_remove(ctx->eps[0]);
-        assert(r); // wasn't canceled? someone created new EPs/transfers?
-    }
+    assert(!ctx->num_eps);
     assert(!ctx->num_devs); // logic error
+    assert(!ctx->num_dead_devs);
     pthread_mutex_unlock(&ctx->lock);
-
-    gc_dead_devs(ctx);
 
     libusb_exit(ctx->usb_ctx);
     free(ctx->eps);
@@ -348,6 +349,9 @@ static bool ep_maybe_remove(struct usb_ep_priv *p)
 static bool resubmit(struct usb_ep_priv *p, struct libusb_transfer *tr,
                      bool user_cb)
 {
+    assert(!tr->callback);
+    // Set to something invalid to avoid confusion.
+    tr->status = (enum libusb_transfer_status)-1;
     tr->callback = transfer_cb;
     int r = libusb_submit_transfer(tr);
     if (!r)
@@ -426,6 +430,7 @@ static LIBUSB_CALL void transfer_cb(struct libusb_transfer *tr)
 static struct usb_ep_priv *ep_add(struct usb_thread *ctx, struct usb_ep *ep)
 {
     assert(!ep->p);
+    assert(!ctx->terminate);
 
     if (!EXTEND_ARRAY(ctx->eps, ctx->num_eps, 1))
         return NULL;

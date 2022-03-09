@@ -50,7 +50,6 @@ struct pipe {
 struct event_loop_item {
     void (*prepare_wait)(struct event_loop_item *item);
     void (*work)(struct event_loop_item *item);
-    void (*destroy)(struct event_loop_item *item);
 
     struct event_loop *owner;
     void *priv;
@@ -158,7 +157,6 @@ static struct event_loop_item *event_loop_add_item(struct event_loop *ev)
                 .os = {
                     .owner = &ev->os,
                 },
-                .destroy = event_loop_remove_item,
             };
             ev->items_list_changed = true;
             return item;
@@ -252,9 +250,6 @@ void event_loop_run(struct event_loop *ev)
             }
         }
     }
-
-    while (ev->num_items)
-        ev->items[ev->num_items - 1]->destroy(ev->items[ev->num_items - 1]);
 
     assert(ev->running);
     ev->running = false;
@@ -480,12 +475,6 @@ void event_destroy(struct event *ev)
     event_loop_remove_item(ev->item);
 }
 
-static void pipe_item_destroy(struct event_loop_item *item)
-{
-    struct pipe *p = item->priv;
-    pipe_destroy(p);
-}
-
 static void pipe_work(struct event_loop_item *item)
 {
     struct pipe *p = item->priv;
@@ -559,7 +548,6 @@ static struct pipe *alloc_pipe(struct event_loop *ev)
         return NULL;
     item->priv = &item->alloc_.st_pipe;
     item->work = pipe_work;
-    item->destroy = pipe_item_destroy;
     struct pipe *p = item->priv;
     *p = (struct pipe){
         .item = item,

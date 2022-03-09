@@ -2638,6 +2638,18 @@ static void on_terminate(void *ud, struct event_loop *ev)
     }
     ctx->num_clients = 0;
 
+    pipe_destroy(ctx->ipc_server);
+    ctx->ipc_server = NULL;
+
+    timer_destroy(ctx->latency_tester_timer);
+    ctx->latency_tester_timer = NULL;
+
+    pipe_destroy(ctx->extcap_ctrl_in);
+    ctx->extcap_ctrl_in = NULL;
+
+    pipe_destroy(ctx->extcap_ctrl_out);
+    ctx->extcap_ctrl_out = NULL;
+
     event_loop_exit(ctx->ev);
 }
 
@@ -2829,7 +2841,6 @@ int main(int argc, char **argv)
     }
 
     event_loop_run(ev);
-    event_loop_destroy(ev);
     options_free(option_list, &ctx->opts);
     if (ctx->fifo_path)
         unlink(ctx->fifo_path);
@@ -2838,6 +2849,16 @@ int main(int argc, char **argv)
     free(ctx->clients);
     byte_fifo_dealloc(&ctx->log_fifo);
     usb_thread_destroy(ctx->global->usb_thr);
+
+    event_destroy(ctx->phy_update_event);
+    event_destroy(ctx->usb_discon_event);
+    timer_destroy(ctx->check_links_timer);
+    timer_destroy(ctx->grabber_status_timer);
+    timer_destroy(ctx->exit_timer);
+    pipe_destroy(ctx->signalfd);
+    event_destroy(ctx->log_event);
+    event_loop_destroy(ev);
+
     pthread_mutex_destroy(&ctx->log_fifo_writer_lock);
     return 0;
 

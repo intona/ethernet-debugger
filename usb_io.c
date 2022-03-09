@@ -55,7 +55,7 @@ struct usb_dev {
     libusb_device_handle *dev;
 };
 
-static bool ep_maybe_remove(struct usb_ep_priv *p);
+static bool ep_gc_if_done(struct usb_ep_priv *p);
 static LIBUSB_CALL void transfer_cb(struct libusb_transfer *transfer);
 
 libusb_context *usb_thread_libusb_context(struct usb_thread *ctx)
@@ -141,27 +141,6 @@ void usb_thread_device_unref(struct usb_thread *ctx, libusb_device_handle *dev)
         assert(0); // trying to unref an unknown device
     unref_dev(ctx, ref);
     pthread_mutex_unlock(&ctx->lock);
-}
-
-// Flag all transfers as canceled. Remove transfers that were canceled and
-// completed. May need another libusb event loop iteration to finally remove all
-// transfers.
-static void cancel_all_ep_transfers(struct usb_ep_priv *p)
-{
-    // Backward iteration so we can free array items during iteration.
-    for (size_t n = p->num_transfers; n > 0; n--) {
-        size_t index = n - 1;
-
-        if (p->transfers[index]->callback) {
-            libusb_cancel_transfer(p->transfers[index]);
-        } else {
-            // No callback will come -> remove.
-            libusb_free_transfer(p->transfers[index]);
-            p->num_transfers -= 1;
-            for (size_t i = index; i < p->num_transfers; i++)
-                p->transfers[i] = p->transfers[i + 1];
-        }
-    }
 }
 
 static void gc_dead_devs(struct usb_thread *ctx)
@@ -284,7 +263,7 @@ void usb_thread_destroy(struct usb_thread *ctx)
 // Remove an EP "registration"; but do not actually remove it if there are still
 // "orphaned" transfers going on.
 // Returns true if actually removed and deallocated.
-static bool ep_maybe_remove(struct usb_ep_priv *p)
+static bool ep_gc_if_done(struct usb_ep_priv *p)
 {
     if (!p)
         return true;
@@ -292,9 +271,14 @@ static bool ep_maybe_remove(struct usb_ep_priv *p)
     struct usb_thread *ctx = p->ctx;
     assert(!p->ep);
 
-    cancel_all_ep_transfers(p);
-    if (p->num_transfers)
-        return false; // delay to later
+    for (size_t n = 0; n < p->num_transfers; n++) {
+        if (p->transfers[n] && p->transfers[n]->callback)
+            return false; // at least one transfer lives - delay to later
+
+        // No callback will come (or transfer is NULL) -> free & clear.
+        libusb_free_transfer(p->transfers[n]);
+        p->transfers[n] = NULL;
+    }
 
     free(p->packet_mem);
 
@@ -318,6 +302,21 @@ static bool ep_maybe_remove(struct usb_ep_priv *p)
     free(p->transfers);
     free(p);
     return true;
+}
+
+// Must be called locked, and preferably only once.
+static void ep_remove(struct usb_ep_priv *p)
+{
+    if (p->ep)
+        p->ep->p = NULL;
+    p->ep = NULL;
+
+    for (size_t n = 0; n < p->num_transfers; n++) {
+        if (p->transfers[n] && p->transfers[n]->callback)
+            libusb_cancel_transfer(p->transfers[n]);
+    }
+
+    ep_gc_if_done(p);
 }
 
 static bool resubmit(struct usb_ep_priv *p, struct libusb_transfer *tr,
@@ -395,7 +394,7 @@ static LIBUSB_CALL void transfer_cb(struct libusb_transfer *tr)
         }
 
     } else {
-        ep_maybe_remove(p);
+        ep_gc_if_done(p);
     }
 
     pthread_mutex_unlock(&ctx->lock);
@@ -461,7 +460,7 @@ done:
         ep->p = p;
         p->ep = ep;
     } else {
-        ep_maybe_remove(p);
+        ep_remove(p);
         p = NULL;
     }
     pthread_mutex_unlock(&ctx->lock);
@@ -533,9 +532,7 @@ void usb_ep_remove(struct usb_ep *ep)
         struct usb_ep_priv *p = ep->p;
         struct usb_thread *ctx = p->ctx;
         pthread_mutex_lock(&ctx->lock);
-        ep->p = NULL;
-        p->ep = NULL;
-        ep_maybe_remove(p);
+        ep_remove(p);
         pthread_mutex_unlock(&ctx->lock);
     }
 }

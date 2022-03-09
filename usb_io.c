@@ -18,10 +18,7 @@ struct usb_thread {
     pthread_mutex_t lock;
     struct notifier *hotplug_notify;
 
-    atomic_bool terminate, terminating;
-
-    // -- protected by libusb event lock
-    int interrupt;
+    atomic_bool terminate;
 
     // -- protected by lock
     struct usb_ep_priv **eps;
@@ -167,27 +164,6 @@ static void cancel_all_ep_transfers(struct usb_ep_priv *p)
     }
 }
 
-// Attempt to cancel all transfers. Return true only after they're all done.
-static bool usb_cancel_all(struct usb_thread *ctx)
-{
-    bool res = true;
-    pthread_mutex_lock(&ctx->lock);
-
-    for (size_t n = 0; n < ctx->num_eps; n++) {
-        struct usb_ep_priv *p = ctx->eps[n];
-
-        cancel_all_ep_transfers(p);
-
-        res &= p->num_transfers == 0;
-        if (!res)
-            goto done;
-    }
-
-done:
-    pthread_mutex_unlock(&ctx->lock);
-    return res;
-}
-
 static void gc_dead_devs(struct usb_thread *ctx)
 {
     pthread_mutex_lock(&ctx->lock);
@@ -203,24 +179,14 @@ static void *usb_thread(void *arg)
 {
     struct usb_thread *ctx = arg;
 
-    while (1) {
-        if (ctx->terminate) {
-            if (usb_cancel_all(ctx))
-                break;
-            // See apology in usb_thread_destroy().
-            nanosleep(&(struct timespec){.tv_nsec = 3 * 1000 * 1000}, NULL);
-        }
-
+    while (!ctx->terminate) {
         gc_dead_devs(ctx);
 
-        int res = libusb_handle_events_completed(ctx->usb_ctx, &ctx->interrupt);
+        int res = libusb_handle_events(ctx->usb_ctx);
         if (res != LIBUSB_SUCCESS)
             break;
     }
 
-    gc_dead_devs(ctx);
-
-    ctx->terminating = true;
     return NULL;
 }
 
@@ -271,28 +237,35 @@ void usb_thread_destroy(struct usb_thread *ctx)
     if (!ctx)
         return;
 
+    // Ask usb_thread to exit. Assume this makes libusb_handle_events() exit
+    // immediately, even if we called this before libusb_handle_events() was
+    // entered. (Which seems to be true.)
     ctx->terminate = true;
+    libusb_interrupt_event_handler(ctx->usb_ctx);
+    pthread_join(ctx->thread, NULL);
 
+    // All EPs must have been removed by the user.
     pthread_mutex_lock(&ctx->lock);
     for (size_t n = 0; n < ctx->num_eps; n++)
-        assert(!ctx->eps[n]->ep); // all EPs must have been removed
+        assert(!ctx->eps[n]->ep);
     pthread_mutex_unlock(&ctx->lock);
 
-    // Make it act on ctx->terminate. This is pretty crap, but I did not find
-    // a better way that would work with multiple event handlers.
-    // The loop and the waits are (normally unacceptable) workarounds for
-    // libusb restrictions, bugs (libusb or my own), or misunderstandings.
-    while (!ctx->terminating) {
-        if (libusb_try_lock_events(ctx->usb_ctx) == 0) {
-            ctx->interrupt = 1;
-            libusb_unlock_events(ctx->usb_ctx);
+    // Wait for all transfers to finish (via transfer_cb); an EP is finally
+    // removed when it has no more pending canceled (but "in-flight") transfers.
+    while (1) {
+        pthread_mutex_lock(&ctx->lock);
+        if (!ctx->num_eps) {
+            pthread_mutex_unlock(&ctx->lock);
             break;
         }
-        libusb_interrupt_event_handler(ctx->usb_ctx);
-        nanosleep(&(struct timespec){.tv_nsec = 1 * 1000 * 1000}, NULL);
+        pthread_mutex_unlock(&ctx->lock);
+
+        int res = libusb_handle_events(ctx->usb_ctx);
+        if (res != LIBUSB_SUCCESS)
+            break;
     }
 
-    pthread_join(ctx->thread, NULL);
+    gc_dead_devs(ctx);
 
     pthread_mutex_lock(&ctx->lock);
     assert(!ctx->num_eps);
@@ -339,6 +312,7 @@ static bool ep_maybe_remove(struct usb_ep_priv *p)
 
     unref_dev(ctx, p->dev);
 
+    // Required by usb_thread_destroy().
     libusb_interrupt_event_handler(ctx->usb_ctx);
 
     free(p->transfers);

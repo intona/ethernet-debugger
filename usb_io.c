@@ -240,8 +240,23 @@ void usb_thread_destroy(struct usb_thread *ctx)
         pthread_mutex_unlock(&ctx->lock);
 
         int res = libusb_handle_events(ctx->usb_ctx);
-        if (res != LIBUSB_SUCCESS)
+        if (res != LIBUSB_SUCCESS) {
+            LOG(ctx, "Unexpected libusb error %d\n", res);
+            // We can't handle this situation, because we'd require libusb to
+            // cooperate to free pending transfers. Work it around by unsetting
+            // the callbacks (in case libusb invokes them later) and pretending
+            // all EPs were shutdown properly.
+            for (size_t n = 0; n < ctx->num_eps; n++) {
+                struct usb_ep_priv *ep = ctx->eps[n];
+                for (size_t i = 0; i < ep->num_transfers; i++) {
+                    if (ep->transfers[i])
+                        ep->transfers[i]->callback = NULL;
+                }
+                unref_dev(ctx, ep->dev);
+            }
+            ctx->num_eps = 0;
             break;
+        }
     }
 
     gc_dead_devs(ctx);

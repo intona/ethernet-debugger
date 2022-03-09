@@ -2847,7 +2847,6 @@ int main(int argc, char **argv)
     free(ctx->fifo_path);
     free(ctx->wireshark_path);
     free(ctx->clients);
-    byte_fifo_dealloc(&ctx->log_fifo);
     usb_thread_destroy(ctx->global->usb_thr);
 
     event_destroy(ctx->phy_update_event);
@@ -2859,6 +2858,8 @@ int main(int argc, char **argv)
     event_destroy(ctx->log_event);
     event_loop_destroy(ev);
 
+    flush_log(ctx);
+    byte_fifo_dealloc(&ctx->log_fifo);
     pthread_mutex_destroy(&ctx->log_fifo_writer_lock);
     return 0;
 

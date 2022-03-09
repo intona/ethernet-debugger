@@ -455,7 +455,7 @@ void event_set_notifier(struct event *ev, struct notifier *nf)
             ev->notifier = nf;
             ev->notifier_id = notifier_xadd(ev->notifier,
                 ev, ev_notifier_on_notify, ev_notifier_on_destroy);
-            int64_t count;
+            int64_t count = 0;
             notifier_wait(ev->notifier, &count, NULL);
             need_signal |= count > 0;
         }

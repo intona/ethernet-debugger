@@ -121,7 +121,7 @@ const struct option_def option_list[] = {
     {"exit-on", offsetof(struct options, exit_on),
         COMMAND_PARAM_TYPE_INT64,
         "Control when to exit the program.",
-        PARAM_ALIASES({"default", "0", "Auto-exit with --wireshark only."},
+        PARAM_ALIASES({"default", "0", "Auto-exit with --wireshark or --fifo only."},
                       {"capture-end", "1", "Auto-exit if capturing ends."},
                       {"never", "2", "Do not auto-exit."},
                       {"always", "3", "Exit after initialization."}),

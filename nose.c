@@ -754,8 +754,10 @@ static void grab_stop(struct nose_ctx *ctx)
         timer_destroy(ctx->grabber_status_timer);
         ctx->grabber_status_timer = NULL;
         LOG(ctx, "Capture thread stopped.\n");
-        if (ctx->opts.exit_on == 1)
+        if (ctx->opts.exit_on == 1 && !event_loop_is_terminate_pending(ctx->ev)) {
+            LOG(ctx, "Exiting because capture ended (--exit-on or --fifo).\n");
             event_loop_request_terminate(ctx->ev);
+        }
         if (ctx->latency_tester_receiver) {
             LOG(ctx, "Receiver stopped. Ports will remain blocked.\n"
                       "(Use 'block_ports none' to unblock.)\n");
@@ -1599,6 +1601,7 @@ static void cmd_exit(struct command_ctx *cctx, struct command_param *params,
 {
     struct nose_ctx *ctx = cctx->priv;
 
+    LOG(ctx, "Exit command received.\n");
     event_loop_request_terminate(ctx->ev);
 }
 
@@ -1807,8 +1810,10 @@ static void on_ipc_client_event(void *ud, struct pipe *p, unsigned events)
     if (events & PIPE_EVENT_CLOSED_READ) {
         for (size_t n = 0; n < ctx->num_clients; n++) {
             if (ctx->clients[n]->conn == p) {
-                if (ctx->clients[n]->exit_on_close)
+                if (ctx->clients[n]->exit_on_close) {
+                    LOG(ctx, "Exiting because reading end closed.\n");
                     event_loop_request_terminate(ctx->ev);
+                }
                 ctx->clients[n] = ctx->clients[ctx->num_clients - 1];
                 ctx->num_clients--;
                 break;
@@ -2400,8 +2405,10 @@ static void on_term_signal(void *ud, struct pipe *p, unsigned events)
     if (events & PIPE_EVENT_NEW_DATA) {
         char sig = 0;
         pipe_read(p, &sig, 1);
-        LOG(ctx, "Signal %d received, exiting.\n", sig);
-        event_loop_request_terminate(ctx->ev);
+        if (!event_loop_is_terminate_pending(ctx->ev)) {
+            LOG(ctx, "Signal %d received, exiting.\n", sig);
+            event_loop_request_terminate(ctx->ev);
+        }
     }
 }
 
@@ -2827,12 +2834,14 @@ int main(int argc, char **argv)
     if (!ctx->num_clients && !ctx->ipc_server &&
         !(ctx->usb_dev && ctx->usb_dev->grabber))
     {
-        LOG(ctx, "Nothing to do. Exiting.\n");
+        LOG(ctx, "Nothing to do and no open input. Exiting.\n");
         event_loop_request_terminate(ev);
     }
 
-    if (ctx->opts.exit_on == 3)
+    if (ctx->opts.exit_on == 3) {
+        LOG(ctx, "Exiting immediately as requested by --exit-on.\n");
         event_loop_request_terminate(ctx->ev);
+    }
 
     if (ctx->opts.exit_timeout >= 0) {
         ctx->exit_timer = event_loop_create_timer(ctx->ev);

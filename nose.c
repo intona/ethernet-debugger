@@ -121,9 +121,10 @@ const struct option_def option_list[] = {
     {"exit-on", offsetof(struct options, exit_on),
         COMMAND_PARAM_TYPE_INT64,
         "Control when to exit the program.",
-        PARAM_ALIASES({"default", "0", "Auto-exit with --wireshark or --fifo only."},
-                      {"capture-end", "1", "Auto-exit if capturing ends."},
-                      {"never", "2", "Do not auto-exit."},
+        PARAM_ALIASES({"default", "0", "Like 'no-input', but 'no-capture' if --wireshark/--fifo is used."},
+                      {"no-input", "4", "Exit if no command input (terminal, IPC) is active."},
+                      {"no-capture", "1", "Exit if capturing stops or wasn't started."},
+                      {"never", "2", "Do not auto-exit (except on signals or exit command)."},
                       {"always", "3", "Exit after initialization."}),
         .flags = COMMAND_FLAG_ALIAS_ONLY | COMMAND_FLAG_RUNTIME},
     {"exit-timeout", offsetof(struct options, exit_timeout),
@@ -2652,37 +2653,54 @@ static void on_terminate(void *ud, struct event_loop *ev)
     event_loop_exit(ctx->ev);
 }
 
-static void check_auto_exit(struct nose_ctx *ctx)
+static bool has_control_input(struct nose_ctx *ctx)
 {
-    if (event_loop_is_terminate_pending(ctx->ev))
-        return;
-
     if (ctx->ipc_server)
-        return;
+        return true;
 
     for (size_t n = 0; n < ctx->num_clients; n++) {
         if (ctx->clients[n]->is_control)
-            return;
+            return true;
     }
 
+    return false;
+}
+
+static void check_auto_exit(struct nose_ctx *ctx)
+{
     bool capturing = ctx->usb_dev && ctx->usb_dev->grabber;
+    bool has_control = has_control_input(ctx);
+    const char *reason = NULL;
 
-    // At this point, we have no controlling input.
-    const char *reason = "Nothing to do and no controlling input. Exiting.\n";
-
-    // User used "--exit-on never" - fine, take it literally.
-    if (ctx->opts.exit_on == 2)
+    if (event_loop_is_terminate_pending(ctx->ev))
         return;
 
-    // If we're told to capture until the bitter end, continue doing so.
-    if (ctx->opts.exit_on == 1) {
-        if (capturing)
-            return;
-        reason = "Exiting because capture ended (--exit-on or --fifo).\n";
+    int effective_exit_on = ctx->opts.exit_on;
+    if (!effective_exit_on)
+        effective_exit_on = 4; // default to "no-input"
+
+    switch (effective_exit_on) {
+    case 1: // "no-capture"
+        if (!capturing)
+            reason = "Exiting because capture ended.\n";
+        break;
+    case 2: // "never"
+        break;
+    case 3: // "always"
+        reason = "Exiting immediately as requested by --exit-on.\n";
+        break;
+    case 4: // "no-input"
+        if (!has_control)
+            reason = "Exiting because no controlling input (terminal/IPC) present.\n";
+        break;
+    default:
+        assert(0);
     }
 
-    LOG(ctx, reason);
-    event_loop_request_terminate(ctx->ev);
+    if (reason) {
+        LOG(ctx, reason);
+        event_loop_request_terminate(ctx->ev);
+    }
 }
 
 static void on_idle(void *ud, struct event_loop *ev)
@@ -2814,7 +2832,7 @@ int main(int argc, char **argv)
     }
 
     if (exit_on_capture_stop && !ctx->opts.exit_on)
-        ctx->opts.exit_on = 1; // capture end
+        ctx->opts.exit_on = 1; // "no-capture"
 
     if (ctx->opts.ipc_server[0]) {
         char *ipc_path = NULL;
@@ -2862,11 +2880,6 @@ int main(int argc, char **argv)
             flush_log(ctx);
             exit(err);
         }
-    }
-
-    if (ctx->opts.exit_on == 3) {
-        LOG(ctx, "Exiting immediately as requested by --exit-on.\n");
-        event_loop_request_terminate(ctx->ev);
     }
 
     if (ctx->opts.exit_timeout >= 0) {

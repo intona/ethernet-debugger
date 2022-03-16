@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <assert.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,8 +77,10 @@ struct message {
 struct event_loop {
     pthread_mutex_t lock;
 
+    atomic_bool request_terminate;
+
     // -- Specifically protected by lock.
-    bool request_terminate, wakeup;
+    bool wakeup;
 
     // -- Various locking policy.
     struct os_event_loop os;
@@ -192,8 +195,9 @@ void event_loop_run(struct event_loop *ev)
 
         pthread_mutex_lock(&ev->lock);
         ev->wakeup = false;
-        want_terminate = ev->terminating != ev->request_terminate;
-        ev->terminating = ev->request_terminate;
+        bool req_term = ev->request_terminate;
+        want_terminate = ev->terminating != req_term;
+        ev->terminating = req_term;
         pthread_mutex_unlock(&ev->lock);
 
         // Flag timeouts.
@@ -271,10 +275,7 @@ void event_loop_destroy(struct event_loop *ev)
 
 void event_loop_request_terminate(struct event_loop *ev)
 {
-    pthread_mutex_lock(&ev->lock);
     ev->request_terminate = true;
-    pthread_mutex_unlock(&ev->lock);
-
     wakeup_event_loop(ev);
 }
 

@@ -41,6 +41,9 @@ void event_loop_destroy(struct event_loop *ev);
 // This function is thread-safe and can be called from any thread.
 void event_loop_request_terminate(struct event_loop *ev);
 
+// Whether something else called event_loop_request_terminate().
+bool event_loop_is_terminate_pending(struct event_loop *ev);
+
 // This makes the event loop exit. Normally, if you want to shut it down
 // properly, you should call event_loop_request_terminate(), and the
 // on_terminate callback should call this function after it has made sure

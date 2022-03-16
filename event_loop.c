@@ -279,6 +279,11 @@ void event_loop_request_terminate(struct event_loop *ev)
     wakeup_event_loop(ev);
 }
 
+bool event_loop_is_terminate_pending(struct event_loop *ev)
+{
+    return ev->request_terminate;
+}
+
 void event_loop_exit(struct event_loop *ev)
 {
     ev->exiting = true;

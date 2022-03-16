@@ -60,6 +60,21 @@ void event_loop_exit(struct event_loop *ev);
 void event_loop_set_on_terminate(struct event_loop *ev, void *ud,
                         void (*on_terminate)(void *ud, struct event_loop *ev));
 
+// Set callback to run if the event loop would wait for some future event (such
+// as input arriving, more data being written to output, timer timeouts). This
+// is explicitly not called if there are any events or timeouts to be handled,
+// only if the lowest level OS wait call (such as poll()) is most likely
+// actually going to wait.
+// The callback itself should be careful about not creating new work all the
+// time, because this would cause the idle loop be called again after the new
+// work has been handled. This could lead to burning CPU time for no reason.
+// The callback is called very often, since wait times between events can be
+// very short. The main purpose of the callback is to check the main loop logic
+// for conditions, which can be changed by anything in the main loop, but which
+// can be delayed until the main loop returns to doing nothing.
+void event_loop_set_on_idle(struct event_loop *ev, void *ud,
+                            void (*on_idle)(void *ud, struct event_loop *ev));
+
 // Asynchronously invoke a callback on the event loop. This basically queues a
 // message to the event loop, which then calls cb(). Typically, this function
 // will return long before cb() runs, and you need to be careful.

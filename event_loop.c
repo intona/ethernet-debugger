@@ -92,6 +92,9 @@ struct event_loop {
     void *on_terminate_ud;
     void (*on_terminate)(void *ud, struct event_loop *ev);
 
+    void *on_idle_ud;
+    void (*on_idle)(void *ud, struct event_loop *ev);
+
     struct event_loop_item *items[MAX_ITEMS];
     size_t num_items;
     bool items_list_changed;
@@ -170,6 +173,8 @@ static struct event_loop_item *event_loop_add_item(struct event_loop *ev)
 
 void event_loop_run(struct event_loop *ev)
 {
+    bool did_work = true;
+    bool idle_done = false;
     assert(!ev->running);
     ev->running = true;
 
@@ -187,6 +192,30 @@ void event_loop_run(struct event_loop *ev)
 
             if (item->has_work)
                 timeout = 0;
+
+            if (!timeout)
+                did_work = true;
+        }
+
+        // The idle callback (see event_loop_set_on_idle()) should run if
+        // nothing is going on. For simplicity (???) this is done in several
+        // stages:
+        //  1. check that no work is flagged (did_work == false here)
+        //     if work is flagged, make sure that all work ends by forcing
+        //     timeout = 0
+        //  2. actually call idle callback (idle_done = true)
+        //  3. check again that no work is flagged (timeout=0)
+        //  4. finally call os_event_loop() with proper timeout
+        if (did_work) {
+            timeout = 0;
+            did_work = false;
+            idle_done = false;
+        } else if (!idle_done) {
+            if (ev->on_idle)
+                ev->on_idle(ev->on_idle_ud, ev);
+            // make it check for new work produced by on_idle() itself
+            timeout = 0;
+            idle_done = true;
         }
 
         os_event_loop_wait(&ev->os, timeout);
@@ -198,6 +227,7 @@ void event_loop_run(struct event_loop *ev)
         bool req_term = ev->request_terminate;
         want_terminate = ev->terminating != req_term;
         ev->terminating = req_term;
+        did_work |= want_terminate;
         pthread_mutex_unlock(&ev->lock);
 
         // Flag timeouts.
@@ -208,6 +238,7 @@ void event_loop_run(struct event_loop *ev)
             if (item->timeout && item->timeout <= now) {
                 item->timeout = 0;
                 item->has_work = true;
+                did_work = true;
             }
         }
 
@@ -224,10 +255,13 @@ void event_loop_run(struct event_loop *ev)
             struct message msg = ev->messages[message_pos++];
             pthread_mutex_unlock(&ev->lock);
             msg.cb(msg.ud);
+            did_work = true;
         }
 
-        if (want_terminate && ev->on_terminate)
+        if (want_terminate && ev->on_terminate) {
             ev->on_terminate(ev->on_terminate_ud, ev);
+            did_work = true;
+        }
 
         // Dispatch new work. Needs to be done "carefully", since user callbacks
         // are run, which can change around stuff (especially adding/removing
@@ -247,6 +281,8 @@ void event_loop_run(struct event_loop *ev)
 
                     if (item->work)
                         item->work(item);
+
+                    did_work = true;
 
                     if (ev->items_list_changed)
                         break; // repeat
@@ -294,6 +330,13 @@ void event_loop_set_on_terminate(struct event_loop *ev, void *ud,
 {
     ev->on_terminate_ud = ud;
     ev->on_terminate = on_terminate;
+}
+
+void event_loop_set_on_idle(struct event_loop *ev, void *ud,
+                            void (*on_idle)(void *ud, struct event_loop *ev))
+{
+    ev->on_idle_ud = ud;
+    ev->on_idle = on_idle;
 }
 
 bool event_loop_send_callback(struct event_loop *ev, void *ud, void (*cb)(void *ud))

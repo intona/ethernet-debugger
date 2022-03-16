@@ -247,7 +247,7 @@ struct nose_ctx {
 struct client {
     struct pipe *conn;
     bool is_terminal;
-    bool exit_on_close;
+    bool is_control;
 };
 
 #define MAX_LOG_RECORD 512
@@ -754,10 +754,6 @@ static void grab_stop(struct nose_ctx *ctx)
         timer_destroy(ctx->grabber_status_timer);
         ctx->grabber_status_timer = NULL;
         LOG(ctx, "Capture thread stopped.\n");
-        if (ctx->opts.exit_on == 1 && !event_loop_is_terminate_pending(ctx->ev)) {
-            LOG(ctx, "Exiting because capture ended (--exit-on or --fifo).\n");
-            event_loop_request_terminate(ctx->ev);
-        }
         if (ctx->latency_tester_receiver) {
             LOG(ctx, "Receiver stopped. Ports will remain blocked.\n"
                       "(Use 'block_ports none' to unblock.)\n");
@@ -1810,10 +1806,6 @@ static void on_ipc_client_event(void *ud, struct pipe *p, unsigned events)
     if (events & PIPE_EVENT_CLOSED_READ) {
         for (size_t n = 0; n < ctx->num_clients; n++) {
             if (ctx->clients[n]->conn == p) {
-                if (ctx->clients[n]->exit_on_close) {
-                    LOG(ctx, "Exiting because reading end closed.\n");
-                    event_loop_request_terminate(ctx->ev);
-                }
                 ctx->clients[n] = ctx->clients[ctx->num_clients - 1];
                 ctx->num_clients--;
                 break;
@@ -1836,7 +1828,7 @@ static struct client *add_client(struct nose_ctx *ctx, struct pipe *p,
     *cl = (struct client){
         .conn = p,
         .is_terminal = is_terminal,
-        .exit_on_close = is_terminal,
+        .is_control = is_terminal,
     };
     ctx->clients[ctx->num_clients++] = cl;
 
@@ -2660,6 +2652,46 @@ static void on_terminate(void *ud, struct event_loop *ev)
     event_loop_exit(ctx->ev);
 }
 
+static void check_auto_exit(struct nose_ctx *ctx)
+{
+    if (event_loop_is_terminate_pending(ctx->ev))
+        return;
+
+    if (ctx->ipc_server)
+        return;
+
+    for (size_t n = 0; n < ctx->num_clients; n++) {
+        if (ctx->clients[n]->is_control)
+            return;
+    }
+
+    bool capturing = ctx->usb_dev && ctx->usb_dev->grabber;
+
+    // At this point, we have no controlling input.
+    const char *reason = "Nothing to do and no controlling input. Exiting.\n";
+
+    // User used "--exit-on never" - fine, take it literally.
+    if (ctx->opts.exit_on == 2)
+        return;
+
+    // If we're told to capture until the bitter end, continue doing so.
+    if (ctx->opts.exit_on == 1) {
+        if (capturing)
+            return;
+        reason = "Exiting because capture ended (--exit-on or --fifo).\n";
+    }
+
+    LOG(ctx, reason);
+    event_loop_request_terminate(ctx->ev);
+}
+
+static void on_idle(void *ud, struct event_loop *ev)
+{
+    struct nose_ctx *ctx = ud;
+
+    check_auto_exit(ctx);
+}
+
 static void on_exit_timer(void *ud, struct timer *t)
 {
     struct nose_ctx *ctx = ud;
@@ -2697,6 +2729,7 @@ int main(int argc, char **argv)
     ctx->log = ctx->global->log;
 
     event_loop_set_on_terminate(ev, ctx, on_terminate);
+    event_loop_set_on_idle(ev, ctx, on_idle);
 
     ctx->opts = option_defs;
     options_init_allocs(option_list, &ctx->opts);
@@ -2811,7 +2844,7 @@ int main(int argc, char **argv)
             LOG(ctx, "error: creating IPC connection failed.\n");
             goto error_exit;
         }
-        cl->exit_on_close = true;
+        cl->is_control = true;
     }
 
 #if HAVE_POSIX
@@ -2829,13 +2862,6 @@ int main(int argc, char **argv)
             flush_log(ctx);
             exit(err);
         }
-    }
-
-    if (!ctx->num_clients && !ctx->ipc_server &&
-        !(ctx->usb_dev && ctx->usb_dev->grabber))
-    {
-        LOG(ctx, "Nothing to do and no open input. Exiting.\n");
-        event_loop_request_terminate(ev);
     }
 
     if (ctx->opts.exit_on == 3) {

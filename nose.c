@@ -2698,7 +2698,7 @@ static void check_auto_exit(struct nose_ctx *ctx)
     }
 
     if (reason) {
-        LOG(ctx, reason);
+        LOG(ctx, "%s", reason);
         event_loop_request_terminate(ctx->ev);
     }
 }

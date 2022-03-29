@@ -289,6 +289,7 @@ static void *writer_thread(void *ptr)
     size_t wbuf_size = MAX_PCAPNG_PACKET_SIZE * 1000;
     int output_fd = -1;
     int link_type = gr->fifos[0].gr_iface.pcap_linktype;
+    struct wbuf buf = {0};
 
     struct grabber_interface *ifaces[2] = {
         &gr->fifos[0].gr_iface,
@@ -305,8 +306,6 @@ static void *writer_thread(void *ptr)
             goto done;
         }
     }
-
-    struct wbuf buf = {0};
 
     if (gr->filename) {
         if (strncmp(gr->filename, "fd:", 3) == 0) {

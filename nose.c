@@ -66,6 +66,7 @@ struct options {
     int64_t softbuf;
     int64_t usbbuf;
     bool strip_frames;
+    bool strip_fcs;
     bool capture_stats;
     char *init_cmds;
     char *post_init_cmds;
@@ -158,7 +159,11 @@ const struct option_def option_list[] = {
         .flags = COMMAND_FLAG_RUNTIME},
     {"strip-frames", offsetof(struct options, strip_frames),
         COMMAND_PARAM_TYPE_BOOL,
-        "Strip preamble, SFD, and FCS from ethernet frames.",
+        "Strip preamble & SFD from ethernet frames. (And FCS if --strip-fcs is provided.)",
+        .flags = COMMAND_FLAG_RUNTIME},
+    {"strip-fcs", offsetof(struct options, strip_fcs),
+        COMMAND_PARAM_TYPE_BOOL,
+        "Strip FCS from ethernet frames. (Ignored without --strip-frames.)",
         .flags = COMMAND_FLAG_RUNTIME},
     {"version", offsetof(struct options, print_version),
         COMMAND_PARAM_TYPE_BOOL,
@@ -986,6 +991,7 @@ static void init_grabber_opts(struct nose_ctx *ctx, struct grabber_options *opts
         .usb_buffer = ctx->opts.usbbuf,
         .linktype = ctx->opts.strip_frames ? LINKTYPE_ETHERNET
                                            : LINKTYPE_ETHERNET_MPACKET,
+        .strip_fcs = ctx->opts.strip_frames && ctx->opts.strip_fcs,
         .device = ctx->usb_dev,
     };
 };
@@ -2582,7 +2588,8 @@ static bool handle_extcap(struct nose_ctx *ctx)
 
     if (ctx->opts.extcap_config) {
         printf("arg {number=0}{call=--capture-stats}{display=Log stats}{tooltip=Output stats to log view}{type=boolflag}{default=false}\n");
-        printf("arg {number=1}{call=--strip-frames}{display=Strip physical layer fields}{tooltip=Strip preamble, SFD, and FCS from ethernet frames (pcap linktype)}{type=boolflag}{default=false}\n");
+        printf("arg {number=1}{call=--strip-frames}{display=Strip physical layer fields}{tooltip=Strip preamble, SFD, and (if the option below is enabled) FCS from ethernet frames (changes pcap linktype)}{type=boolflag}{default=false}\n");
+        printf("arg {number=1}{call=--strip-fcs}{display=Strip FCS (CRC) when stripping physical layer}{tooltip=If the above option is enabled, the FCS/CRC field is also stripped. Wireshark won't be able to check frame integrity anymore.}{type=boolflag}{default=false}\n");
         goto exit_immediately;
     }
 

@@ -116,6 +116,7 @@ struct grabber {
     struct device *device;
     struct logfn log;
     struct logfn loghint;
+    bool strip_fcs;
 
     struct usb_ep eps[2];
 
@@ -289,6 +290,7 @@ static void *writer_thread(void *ptr)
     size_t wbuf_size = MAX_PCAPNG_PACKET_SIZE * 1000;
     int output_fd = -1;
     int link_type = gr->fifos[0].gr_iface.pcap_linktype;
+    bool strip_fcs = gr->strip_fcs;
     struct wbuf buf = {0};
 
     struct grabber_interface *ifaces[2] = {
@@ -355,7 +357,7 @@ static void *writer_thread(void *ptr)
             // option: if_fcslen
             wbuf_write16(&buf, 13); // if_fcslen
             wbuf_write16(&buf, 1); // 1 byte length
-            wbuf_write8(&buf, 4); // value: 4 bytes
+            wbuf_write8(&buf, strip_fcs ? 0 : 4); // value: 0 or 4 bytes
             wbuf_write_pad32(&buf);
             // option: if_name
             const char *if_name = n == 0 ? "Port A" : "Port B";
@@ -429,6 +431,9 @@ static void *writer_thread(void *ptr)
             pcap_data += preamble_len;
             pcap_len -= preamble_len;
         }
+
+        if (strip_fcs && pcap_len > 4)
+            pcap_len -= 4;
 
         if (buf.ptr) {
             // a pcapng packet
@@ -822,6 +827,7 @@ int grabber_start(struct global *global, struct grabber_options *opts)
 
     gr->log = global->log;
     gr->loghint = global->loghint;
+    gr->strip_fcs = opts->strip_fcs;
     gr->device = opts->device;
     gr->device->grabber = gr;
 

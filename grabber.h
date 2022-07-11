@@ -87,6 +87,7 @@ struct grabber_options {
                                             // (rounded down)
     size_t usb_buffer;                      // libusb buffers (rounded down)
     int linktype;                           // LINKTYPE_*, 0 to pick a default
+    bool strip_fcs;                         // Remove the FCS (CRC) at the end
     struct device *device;
     // Filters to apply in order. The filters are destroyed when capturing stops
     // (always before grabber_destroy() has returned). The array itself is

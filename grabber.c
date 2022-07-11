@@ -412,12 +412,22 @@ static void *writer_thread(void *ptr)
         uint8_t *packet_data = pkt->data;
         uint8_t *pcap_data = packet_data;
         size_t pcap_len = pkt->size;
+
+        bool preamble_error = true;
+        uint8_t max_preamble_len = MIN(pkt->size, 12);
+        size_t preamble_len = 0;
+        for (size_t n = 0; n < max_preamble_len; n++) {
+            if (pkt->data[n] == 0xD5) {
+                preamble_len = n + 1;
+                preamble_error = false;
+                break;
+            }
+        }
+
         // The ethernet link type doesn't want the preamble/SFD.
         if (link_type == LINKTYPE_ETHERNET) {
-            if (pcap_len >= 8) {
-                pcap_data += 8;
-                pcap_len -= 8;
-            }
+            pcap_data += preamble_len;
+            pcap_len -= preamble_len;
         }
 
         if (buf.ptr) {
@@ -436,20 +446,19 @@ static void *writer_thread(void *ptr)
             wbuf_write16(&buf, 2); // epb_flags
             wbuf_write16(&buf, 4); // length
             uint32_t flags = 0;
-            // Note: there are many other errors you could flag (it's unclear
-            // whether this really helps with anything).
-            if (pkt->size < 7 || memcmp(pkt->data, "UUUUUUU", 7) != 0)
+            if (preamble_error)
                 flags |= 1u << 30; // "preamble error"
-            if (pkt->size < 8 || pkt->data[7] != 0xD5)
+            if (preamble_error)
                 flags |= 1u << 29; // "start frame delimiter error"
-            if (pkt->fcs_error)
+            if (pkt->fcs_error && preamble_len == 8)
                 flags |= 1u << 24; // "crc error"
             if (pkt->symbol_error)
                 flags |= 1u << 31; // "symbol error"
-            // (depends on ethernet speed; use lowest tolerated gap for gigabit)
+            // (depends on ethernet speed; use lowest tolerated gap for gigabit;
+            //  at least 10 MBit seems to allow less)
             if (pkt->interpacket_frame_gap < 8)
                 flags |= 1u << 27; // "wrong Inter Frame Gap error"
-            if (pkt->fcs_error)
+            if (pkt->fcs_error && preamble_len == 8)
                 gr->fifos[pkt->iface->port].num_crcerr++;
             wbuf_write32(&buf, flags);
             // option: dropped packet count

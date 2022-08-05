@@ -677,7 +677,7 @@ int device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
     size_t extra_zeros = 0;
     if (!params->raw) {
         size += 4; // FCS
-        if (size < 64) {
+        if (size < 64 && !params->nopad) {
             extra_zeros = 64 - size;
             size += extra_zeros;
         }

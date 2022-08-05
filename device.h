@@ -85,6 +85,7 @@ struct device_inject_params {
                             // infinite; 0 for disable sending)
     bool raw;               // if true, don't add preamble
     bool enable_corrupt;    // if true, use corrupt_at
+    bool nopad;             // if true, and raw==false, do not pad to 64 bytes
     const void *data;       // pointer to packet data to send
     size_t data_size;       // number of bytes valid in *data
     uint32_t append_random; // number of pseudo-random bytes to append after data

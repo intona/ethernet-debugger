@@ -1366,6 +1366,7 @@ static void cmd_inject(struct command_ctx *cctx, struct command_param *params,
         .append_zero    = params[6].p_int,
         .loop_count     = params[9].p_int,
         .loop_offset    = params[10].p_int,
+        .nopad          = params[11].p_bool,
     };
     int64_t corrupt = params[7].p_int;
     if (corrupt >= 0) {
@@ -2050,6 +2051,8 @@ const struct command_def command_list[] = {
         {"loop-offset", COMMAND_PARAM_TYPE_INT64, "0",
             "repeat packet data at this offset",
             .irange = {0, DEV_INJECT_ETH_BUF_SIZE}},
+        {"nopad", COMMAND_PARAM_TYPE_BOOL, "false",
+            "do not pad short packets to mandatory packet length"},
     }},
     {"inject_stop", "Disable packet injector", cmd_inject_stop, {
         PHY_SELECT_DEF("AB"),

@@ -721,7 +721,8 @@ int device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
 
     assert(offset == size);
 
-    log_hexdump(dev->global->loghint, data, size);
+    if (params->num_packets)
+        log_hexdump(dev->global->loghint, data, size);
 
     if (dev->fw_version < 0x106) {
         // Partial emulation with old firmware.

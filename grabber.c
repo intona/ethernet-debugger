@@ -117,6 +117,7 @@ struct grabber {
     struct logfn log;
     struct logfn loghint;
     bool strip_fcs;
+    bool speed_test;
 
     struct usb_ep eps[2];
 
@@ -748,7 +749,15 @@ static void on_receive(struct usb_ep *ep, void *data, size_t size)
     struct grabber *gr = ep->user_data;
     int interface = ep->ep == EPs[0] ? 0 : 1;
 
-    decode_packed_frames(gr, interface, data, size);
+    if (!gr->speed_test) {
+        decode_packed_frames(gr, interface, data, size);
+    } else {
+        struct packet_fifo *fifo = &gr->fifos[interface];
+        pthread_mutex_lock(&gr->fifo_mutex);
+        fifo->stats.num_packets += 1;
+        fifo->stats.num_bytes += size;
+        pthread_mutex_unlock(&gr->fifo_mutex);
+    }
 }
 
 static void on_error(struct usb_ep *ep, enum libusb_error error)
@@ -828,6 +837,7 @@ int grabber_start(struct global *global, struct grabber_options *opts)
     gr->log = global->log;
     gr->loghint = global->loghint;
     gr->strip_fcs = opts->strip_fcs;
+    gr->speed_test = opts->speed_test;
     gr->device = opts->device;
     gr->device->grabber = gr;
 

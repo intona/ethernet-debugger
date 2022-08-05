@@ -68,6 +68,7 @@ struct options {
     bool strip_frames;
     bool strip_fcs;
     bool capture_stats;
+    bool capture_speed_test;
     char *init_cmds;
     char *post_init_cmds;
     int64_t exit_on;
@@ -157,6 +158,11 @@ const struct option_def option_list[] = {
         COMMAND_PARAM_TYPE_BOOL,
         "Show capture statistics every 1 seconds.",
         .flags = COMMAND_FLAG_RUNTIME},
+    {"capture-speed-test", offsetof(struct options, capture_speed_test),
+        COMMAND_PARAM_TYPE_BOOL,
+        "Capture speed test. Discard capture USB data on reception. See manual "
+        "on how to use.",
+        .flags = COMMAND_FLAG_RUNTIME},
     {"strip-frames", offsetof(struct options, strip_frames),
         COMMAND_PARAM_TYPE_BOOL,
         "Strip preamble & SFD from ethernet frames. (And FCS if --strip-fcs is provided.)",
@@ -214,6 +220,7 @@ struct nose_ctx {
     struct timer *grabber_status_timer;
     struct timer *exit_timer;
     struct grabber_status grabber_status_prev;
+    bool grabber_speed_test;
     struct pipe *ipc_server;
     struct pipe *signalfd;
     struct logfn log;
@@ -957,18 +964,23 @@ static void on_grabber_status_timer(void *ud, struct timer *t)
 
         LOG(ctx,
             " Port %s: Packets transmitted (delta): %"PRIu64" (%"PRIu64")\n"
-            "         Bytes captured (delta): %"PRId64" MiB (%"PRIu64" MiB)\n"
+            "         Bytes captured (delta): %"PRId64" MiB (%"PRIu64" MiB)\n",
+            port_names[DEV_PORT_FROM_INDEX(p)],
+            pst.num_packets,
+            pst.num_packets - pst_prev.num_packets,
+            pst.num_bytes / mib,
+            (pst.num_bytes - pst_prev.num_bytes) / mib);
+
+        if (ctx->grabber_speed_test)
+            continue; // the stats below are not set in this mode
+
+        LOG(ctx,
             "         CRC errors (delta): %"PRId64" (%"PRIu64")\n"
             "         Packets dropped HW (delta): %"PRIu64" (%"PRIu64")\n"
             "         Packets dropped SW (delta): %"PRIu64" (%"PRIu64")\n"
             "         Times since last link up / down: %.1fs / %.1fs\n"
             "         Link up / down changes: %"PRIu64"\n"
             "         Buffer fill: %.0f%% (%"PRId64" overflows)\n",
-            port_names[DEV_PORT_FROM_INDEX(p)],
-            pst.num_packets,
-            pst.num_packets - pst_prev.num_packets,
-            pst.num_bytes / mib,
-            (pst.num_bytes - pst_prev.num_bytes) / mib,
             pst.num_crcerr,
             pst.num_crcerr - pst_prev.num_crcerr,
             pst.hw_dropped,
@@ -992,6 +1004,7 @@ static void init_grabber_opts(struct nose_ctx *ctx, struct grabber_options *opts
         .linktype = ctx->opts.strip_frames ? LINKTYPE_ETHERNET
                                            : LINKTYPE_ETHERNET_MPACKET,
         .strip_fcs = ctx->opts.strip_frames && ctx->opts.strip_fcs,
+        .speed_test = ctx->opts.capture_speed_test,
         .device = ctx->usb_dev,
     };
 };
@@ -1008,6 +1021,8 @@ static bool start_grabber(struct nose_ctx *ctx, struct grabber_options *opts)
         ctx->grabber_status_timer = event_loop_create_timer(ctx->ev);
         timer_set_on_timer(ctx->grabber_status_timer, ctx, on_grabber_status_timer);
         timer_start(ctx->grabber_status_timer, 1000);
+
+        ctx->grabber_speed_test = opts->speed_test;
 
         grabber_read_status(ctx->usb_dev->grabber, &ctx->grabber_status_prev);
     }

@@ -921,12 +921,23 @@ int device_get_port_state(struct logfn logfn, struct device *dev, unsigned port,
     state->disrupt_affected = regs[0];
 
     if (dev->fw_version >= 0x107) {
+        bool new_fields = dev->fw_version >= 0x109;
+        size_t num_regs = new_fields ? 4 : 3;
         reg_base = (6 + portidx) << 20;
-        if (!regs_read(logfn, dev, reg_base + 1, regs, 3))
+        if (!regs_read(logfn, dev, reg_base + 1, regs, num_regs))
             goto error;
 
         state->packets = regs[0];
+        state->packets_valid = true;
         state->sym_error_bytes = regs[2];
+        state->sym_error_bytes_valid = true;
+
+        if (new_fields) {
+            state->crc_error_count = regs[1];
+            state->crc_error_count_valid = true;
+            state->reset_count = regs[3];
+            state->reset_count_valid = true;
+        }
     }
 
     ret = 0;

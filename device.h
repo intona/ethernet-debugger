@@ -140,9 +140,16 @@ struct device_port_state {
     uint32_t inject_dropped;    // # packets dropped because injection was active
     uint32_t disrupt_active;    // # packets still to disrupt (UINT32_MAX = inf)
     uint32_t disrupt_affected;  // # packets that got disrupted (mod 2^32)
-    // added in firmware 1.07
+    // these fields are not available in all firmware revisions
+    bool packets_valid;
+    bool sym_error_bytes_valid;
+    bool crc_error_count_valid;
+    bool reset_count_valid;
     uint32_t packets;           // # packets (at port entry)
     uint32_t sym_error_bytes;   // # bytes that had a symbol error
+    uint32_t crc_error_count;   // # packets with wrong or missing CRC
+    uint32_t reset_count;       // # hardware FIFO reset count (usually due to
+                                // USB transfer or nose being too slow)
 };
 
 // Read some packet disruptor state.

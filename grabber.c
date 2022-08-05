@@ -93,7 +93,7 @@ static_assert(sizeof(struct packet_footer) == 8, "???");
 // frames, while in practice the sc_info.payload_bytecount limits it to 2^16-2,
 // and ethernet usually sets the limit at something below 10KB.
 // Allow some headroom for observing out-of-spec behavior.
-#define MAX_ETH_FRAME_SIZE (20 * 1024)
+#define MAX_ETH_FRAME_SIZE (64 * 1024)
 
 // Maximum number of ethernet frames the HW could possibly put into a USB packet.
 // (Some may be partial packets.)
@@ -101,6 +101,11 @@ static_assert(sizeof(struct packet_footer) == 8, "???");
 
 // Worst case size of a pcapng formatted packet, including pcapng overhead.
 #define MAX_PCAPNG_PACKET_SIZE (MAX_ETH_FRAME_SIZE + 2048)
+
+struct pkt_entry {
+    void *data;
+    struct sc_info info;
+};
 
 // State for a single packet FIFO. They are only separate because the hw wants
 // them separate.
@@ -130,6 +135,8 @@ struct packet_fifo {
     uint16_t seq_counter;
     bool synced;
     int initial_sync;
+    // Needed for parsing backwards & "reversing" the frames.
+    struct pkt_entry pkts_storage[MAX_FRAMES_PER_PACKET];
     // Temporary buffer. In theory, you only need to keep sizeof(sc_info) bytes,
     // and can stream the payload directly to the data ring buffer (this is also
     // why these ring buffers are separate), but this was abandoned due to
@@ -484,6 +491,7 @@ static void *writer_thread(void *ptr)
                 flags |= 1u << 30; // "preamble error"
             if (preamble_error)
                 flags |= 1u << 29; // "start frame delimiter error"
+            // TODO: fw 1.09 fixes this
             if (pkt->fcs_error && preamble_len == 8)
                 flags |= 1u << 24; // "crc error"
             if (pkt->symbol_error)
@@ -531,48 +539,25 @@ done:
 }
 
 static void transmit_packet(struct grabber *gr, struct packet_fifo *fifo,
-                            uint8_t *data, size_t size)
+                            struct sc_info *info, uint8_t *data)
 {
-    struct sc_info info;
+    assert(info->payload_bytecount <= MAX_ETH_FRAME_SIZE);
 
-    // Yes, decode_packed_frames() could still pass such frames.
-    if (size < sizeof(info)) {
-        HINT(gr, "port %u: error: discarding broken frame (%zd bytes)\n",
-             fifo->interface, size);
-        return;
-    }
+    assert(info->magic == 0xABCD);
 
-    memcpy(&info, data + size - sizeof(info), sizeof(info));
-
-    if (info.magic != 0xABCD) {
-        HINT(gr, "port %u: error: discarding broken frame (no footer)\n",
-             fifo->interface);
-        return;
-    }
-
-    size_t packet_space = size - sizeof(info);
-    size_t packet_len = info.payload_bytecount;
-    if (packet_space != ((packet_len  + 3) & (~(size_t)3))) {
-        HINT(gr, "port: %u: error: mismatching packet payload size: %zd vs. %zd\n",
-             fifo->interface, packet_space, packet_len);
-        // FIFO consumer must know packet allocation size, so this is mandatory.
-        info.payload_bytecount = packet_space;
-    }
-
-    assert(!(info.errors & (1 << 14))); // caller should have filtered this
-    assert(packet_space <= MAX_ETH_FRAME_SIZE);
+    size_t aligned_size = (info->payload_bytecount + 3) & (~(size_t)3);
 
     // In particular, write the footer as header.
-    bool ok = byte_fifo_write_atomic_2(&fifo->data, &info, sizeof(info),
-                                       data, size - sizeof(info));
+    bool ok = byte_fifo_write_atomic_2(&fifo->data, info, sizeof(*info),
+                                       data, aligned_size);
 
     pthread_mutex_lock(&gr->fifo_mutex);
 
     // with mod32 wraparound
-    uint32_t new_packets = info.packet_counter - fifo->hw_last_seq;
-    fifo->hw_last_seq = info.packet_counter;
+    uint32_t new_packets = info->packet_counter - fifo->hw_last_seq;
+    fifo->hw_last_seq = info->packet_counter;
     // Don't report bogus missing frames at the start.
-    if (!fifo->frames_written)
+    if (!fifo->stats.num_packets)
         new_packets = 1;
     // Should be impossible.
     if (new_packets == 0) {
@@ -582,9 +567,9 @@ static void transmit_packet(struct grabber *gr, struct packet_fifo *fifo,
 
     fifo->stats.hw_dropped += new_packets - 1;
     fifo->stats.num_packets += new_packets;
-    fifo->stats.num_bytes += packet_len;
+    fifo->stats.num_bytes += info->payload_bytecount;
 
-    uint64_t ts = SC_INFO_TIMESTAMP(info);
+    uint64_t ts = SC_INFO_TIMESTAMP(*info);
 
     // Sample the first timestamp. Do this here, where it's roughly at the time
     // when we receive the first packet and know its device timestamp. Since the
@@ -611,6 +596,65 @@ static void transmit_packet(struct grabber *gr, struct packet_fifo *fifo,
     pthread_mutex_unlock(&gr->fifo_mutex);
 }
 
+static void issue_overflow(struct grabber *gr, struct packet_fifo *fifo)
+{
+    HINT(gr, "port: %u: warning: hardware FIFO overflow encountered\n",
+         fifo->interface);
+    fifo->split_buf_size = 0;
+    pthread_mutex_lock(&gr->fifo_mutex);
+    fifo->stats.overflows++;
+    pthread_mutex_unlock(&gr->fifo_mutex);
+}
+
+// packet starts at the end; data/pos may contain more packets (USB packet is
+// parsed from the end); or may contain a partial packet (start of packet missing)
+//  1: ok (pos lowered to next packet)
+//  0: incomplete or too small (not an error if it's a split frame)
+// -1: error, stop parsing
+static int check_packet(struct grabber *gr, struct packet_fifo *fifo,
+                        uint8_t *data, size_t *pos, bool maybe_partial,
+                        struct pkt_entry *out_entry)
+{
+    struct sc_info *info = &out_entry->info;
+    if (*pos < sizeof(*info)) {
+        if (maybe_partial)
+            return 0;
+        HINT(gr, "port %u: error: discarding invalid small packet\n",
+             fifo->interface);
+        return -1;
+    }
+
+    memcpy(info, data + *pos - sizeof(*info), sizeof(*info));
+
+    if (info->magic != 0xABCD) {
+        HINT(gr, "port %u: error: discarding packet with broken magic at 0x%zx\n",
+                fifo->interface, *pos);
+        fifo->split_buf_size = 0;
+        return -1;
+    }
+
+    // "old" overflow reporting (with new firmware use the footer flag instead)
+    if (info->errors & (1 << 14)) {
+        issue_overflow(gr, fifo);
+        return -1;
+    }
+
+    size_t packet_space = (info->payload_bytecount + 3) & (~(size_t)3);
+
+    if (packet_space > *pos - sizeof(*info)) {
+        if (maybe_partial)
+            return 0;
+        HINT(gr, "port: %u: error: mismatching packet size: %zu vs. %zu\n",
+             fifo->interface, packet_space, *pos);
+        return -1;
+    }
+
+    *pos -= packet_space + sizeof(*info);
+    out_entry->data = data + *pos;
+
+    return 1;
+}
+
 static void decode_packed_frames(struct grabber *gr, int interface,
                                  uint8_t *buf, size_t size)
 {
@@ -623,6 +667,9 @@ static void decode_packed_frames(struct grabber *gr, int interface,
         fifo->initial_sync++;
         return;
     }
+
+    if (size == 0)
+        return;
 
     if (size < sizeof(struct packet_footer)) {
         HINT(gr, "port %u: error: short USB packet\n", fifo->interface);
@@ -640,10 +687,18 @@ static void decode_packed_frames(struct grabber *gr, int interface,
     }
 
     if (fifo->synced && footer.seq_counter != (uint16_t)(fifo->seq_counter + 1)) {
-        HINT(gr, "port %u: warning: packet counter going backwards: %u -> %u\n",
+        HINT(gr, "port %u: warning: USB packet counter is broken: %u -> %u\n",
              fifo->interface, fifo->seq_counter, footer.seq_counter);
+        fifo->synced = false;
+        fifo->split_buf_size = 0;
     }
     fifo->seq_counter = footer.seq_counter;
+
+    // Overflows. ("New" overflow flag available since firmware 1.09.)
+    if (footer.flags & 1) {
+        issue_overflow(gr, fifo);
+        return;
+    }
 
     // Idle frames.
     if (footer.last_frame_ptr == 0xFFFFu) {
@@ -660,7 +715,7 @@ static void decode_packed_frames(struct grabber *gr, int interface,
         pthread_mutex_lock(&gr->fifo_mutex);
         if (ts <= fifo->last_hw_ts) {
             HINT(gr, "port %u: warning: hardware idle time is going backwards: "
-                 "ts=%"PRIx64" fifo->last_hw_ts=%"PRIx64"\n",
+                 "ts=0x%"PRIx64" fifo->last_hw_ts=0x%"PRIx64"\n",
                  fifo->interface, ts, fifo->last_hw_ts);
             fifo->stats.ts_problems++;
         }
@@ -682,55 +737,26 @@ static void decode_packed_frames(struct grabber *gr, int interface,
         return;
     }
 
-    // pos_list[first_packet..MAX_FRAMES_PER_PACKET-1]
-    // Each entry points to the start of a frame (last one is partial or the end).
-    int32_t pos_list[MAX_FRAMES_PER_PACKET];
-    size_t first_packet = MAX_FRAMES_PER_PACKET;
+    size_t pkts_num = 0;
+    struct pkt_entry *pkts = &fifo->pkts_storage[MAX_FRAMES_PER_PACKET];
 
+    // Search backwards as required by the USB packet format.
     // Invariant: points to the start of the last partial frame in the USB packet.
-    int32_t pos;
+    // If last_frame_ptr==0: no frame footer in the entire packet, treat like
+    // trailing partial frame.
+    size_t pos = footer.last_frame_ptr;
+    while (pos) {
+        assert(pkts_num < MAX_FRAMES_PER_PACKET);
 
-    if (footer.last_frame_ptr) {
-        // Search for all frames.
-        pos = footer.last_frame_ptr;
-        while (1) {
-            assert(first_packet > 0);
-            pos_list[--first_packet] = pos;
-
-            struct sc_info info;
-            if (pos < sizeof(info))
-                break;
-
-            memcpy(&info, buf + pos - sizeof(info), sizeof(info));
-            if (info.magic != 0xABCD) {
-                HINT(gr, "port %u: error: discarding packet with broken magic\n",
-                     fifo->interface);
-                return;
-            }
-            if (info.errors & (1 << 14)) {
-                HINT(gr, "port: %u: warning: hardware FIFO overflow encountered\n",
-                     fifo->interface);
-                // Discard this, and all before.
-                fifo->synced = false;
-                fifo->split_buf_size = 0;
-                pthread_mutex_lock(&gr->fifo_mutex);
-                fifo->stats.overflows++;
-                pthread_mutex_unlock(&gr->fifo_mutex);
-                return;
-            }
-            if (info.payload_bytecount >= sizeof(fifo->split_buf)) {
-                HINT(gr, "port %u: error: discarding packet with broken frame size\n",
-                     fifo->interface);
-                info.payload_bytecount = sizeof(fifo->split_buf);
-            }
-            int32_t psize = (info.payload_bytecount + 3) & (~(size_t)3);
-            if (psize > pos - sizeof(info))
-                break;
-            pos = pos - sizeof(info) - psize;
+        int r = check_packet(gr, fifo, buf, &pos, true, &pkts[-1]);
+        if (r == -1) {
+            fifo->split_buf_size = 0;
+            return;
         }
-    } else {
-        // Special case: there is no frame footer in the entire packet.
-        pos = payload_size;
+        if (r == 0)
+            break;
+        pkts -= 1;
+        pkts_num += 1;
     }
 
     if (pos > 0) {
@@ -739,33 +765,38 @@ static void decode_packed_frames(struct grabber *gr, int interface,
                  fifo->interface);
             fifo->split_buf_size = sizeof(fifo->split_buf) - pos;
         }
-        memcpy(fifo->split_buf + fifo->split_buf_size, buf, pos);
-        fifo->split_buf_size += pos;
+        if (fifo->split_buf_size) {
+            memcpy(fifo->split_buf + fifo->split_buf_size, buf, pos);
+            fifo->split_buf_size += pos;
+        } else {
+            if (fifo->synced) {
+                HINT(gr, "port %u: warning: split buf 1st half missing\n",
+                     fifo->interface);
+            }
+        }
     }
 
-    // Discard previous split packet if this is the first packet.
-    if (!fifo->synced)
-        fifo->split_buf_size = 0;
-
     // Terminate previous split packet (complete if another frame is started).
-    if (fifo->split_buf_size > 0 && MAX_FRAMES_PER_PACKET - first_packet > 0) {
-        transmit_packet(gr, fifo, fifo->split_buf, fifo->split_buf_size);
+    if (fifo->split_buf_size > 0 && footer.last_frame_ptr) {
+        struct pkt_entry pkt;
+        if (check_packet(gr, fifo, fifo->split_buf, &fifo->split_buf_size,
+                         false, &pkt) >= 1)
+            transmit_packet(gr, fifo, &pkt.info, pkt.data);
         fifo->split_buf_size = 0;
     }
 
     // Transmit complete frames.
-    for (size_t n = first_packet + 1; n < MAX_FRAMES_PER_PACKET; n++) {
-        transmit_packet(gr, fifo, buf + pos_list[n - 1],
-                        pos_list[n] - pos_list[n - 1]);
-    }
+    for (size_t n = 0; n < pkts_num; n++)
+        transmit_packet(gr, fifo, &pkts[n].info, pkts[n].data);
 
     // Trailing partial last frame (if any).
-    if (MAX_FRAMES_PER_PACKET - first_packet > 0) {
-        size_t offset = pos_list[MAX_FRAMES_PER_PACKET - 1];
+    if (footer.last_frame_ptr < payload_size) {
+        size_t offset = footer.last_frame_ptr;
         size_t len = payload_size - offset;
         if (sizeof(fifo->split_buf) - fifo->split_buf_size < len) {
             HINT(gr, "port %u: error: discarding packet with overlong split frame (tail)\n",
                  fifo->interface);
+            fifo->split_buf_size = 0;
             return;
         }
         memcpy(fifo->split_buf + fifo->split_buf_size, buf + offset, len);

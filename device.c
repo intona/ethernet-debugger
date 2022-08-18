@@ -37,6 +37,11 @@ int device_config_raw(struct device *dev, uint32_t *in_data, size_t in_num,
 {
     int res = -1;
 
+    if (out_data)
+        *out_data = NULL;
+    if (out_num)
+        *out_num = 0;
+
     device_cfg_lock(dev);
 
     pthread_mutex_lock(&dev->lock);

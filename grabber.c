@@ -616,7 +616,10 @@ static void decode_packed_frames(struct grabber *gr, int interface,
 {
     struct packet_fifo *fifo = &gr->fifos[interface];
 
-    if (fifo->initial_sync < 10) {
+    // The hardware has 6 hardware buffers; they will be filled with "old" data,
+    // so discard them. Even if there's no traffic on the Ethernet line, this
+    // will take only ~100ms because of the idle packets.
+    if (fifo->initial_sync < 7) {
         fifo->initial_sync++;
         return;
     }

@@ -28,16 +28,27 @@
 #define O_BINARY 0
 #endif
 
+// metadata, _after_ the packet data
 struct sc_info {
+    // modulo 16 bits, since fw 1.09: clamped to 0xFFFF
+    // the packet data is padded to the next 4 byte boundary
     uint16_t payload_bytecount;
+    // 0xABCD
     uint16_t magic;
+    // PTP-style timestamp, using device-internal time, in ns
     uint32_t timestamp_high;
     uint32_t timestamp_low;
+    // incremented on each packet (can be used to detect FIFO packet drops)
     uint32_t packet_counter;
+    //  fw <=1.08: computed FCS (hardcoded to assume 7+1 preamble)
+    //  fw >=1.09: unused
     uint32_t calculated_fcs;
+    // IPG clamped to 0xFFFF
     uint16_t interpacket_frame_gap;
-    // bits 13-0: byte error count
-    // bit 14: overflow
+    // bits 13-0:
+    //  fw <=1.08: number of bytes with symbol errors
+    //  fw >=1.09: bit 0: if there are symbol errors, bits 1-13 unused
+    // bit 14: overflow (packet_footer.flags[0] can be used since fw 1.09)
     // bit 15: fcs error
     uint16_t errors;
 };
@@ -47,30 +58,46 @@ static_assert(sizeof(struct sc_info) == 4 * 5 + 2 * 2, "alignment?");
 #define SC_INFO_TIMESTAMP(inf) ((((uint64_t)(inf).timestamp_high) << 32) | \
                                 (inf).timestamp_low)
 
+// always located at the end of each USB packet
+// reading the USB packet starts with the footer (there is no header)
 struct packet_footer {
+    // 0x63E7
     uint16_t magic;
+    // incremented by 1 on each USB packet (separate counters per endpoint)
     uint16_t seq_counter;
+    // bit 0: FIFO overflow (since fw 1.09)
     uint16_t flags;
+    // points to the end of the last sc_info present in the packet
+    //  if 0xFFFF: idle packet, packet payload is 8 bytes of timestamp
+    //  if 0: no sc_info, packet starts or continues an overlarge ethernet
+    //        frame (multiple such packets can happen in a row, and there is no
+    //        limit; see MAX_ETH_FRAME_SIZE)
+    // other than the 0xFFFF case, this is always a multiple of 4
+    // packets need to be iterated backwards by using the payload_bytecount
+    // (which needs to be rounded up to the next 4 byte boundary)
+    // packets can be split across multiple USB packets (this is why
+    // last_frame_ptr is needed at all)
+    // sc_info is never split across USB packets
     uint16_t last_frame_ptr;
 };
 
 static_assert(sizeof(struct packet_footer) == 8, "???");
 
-// Maximum size of what can come through the endpoints. (Upper bound, see
-// PACKED_CNT_MAX in FPGA.)
-#define MAX_HW_PACKET_SIZE (16 * 1024)
-// Upper bound on USB frame size that we assume is somehow possible.
-#define MAX_USB_FRAME_SIZE MAX_HW_PACKET_SIZE
+// Maximum size of USB packets that can come through the endpoints. (Upper
+// bound, see DMA buffers and PACKED_CNT_MAX in FPGA.)
+#define MAX_USB_FRAME_SIZE (16 * 1024)
+
 // Maximum ethernet frame size we accept. This can be both larger or smaller
 // than the USB frame size, because an USB frame can contain multiple full or
 // partial ethernet frames. In theory, the mechanism allows for endless ethernet
-// frames, while in practice ethernet sets the limit at something below 10KB.
+// frames, while in practice the sc_info.payload_bytecount limits it to 2^16-2,
+// and ethernet usually sets the limit at something below 10KB.
 // Allow some headroom for observing out-of-spec behavior.
 #define MAX_ETH_FRAME_SIZE (20 * 1024)
 
 // Maximum number of ethernet frames the HW could possibly put into a USB packet.
 // (Some may be partial packets.)
-#define MAX_FRAMES_PER_PACKET (MAX_HW_PACKET_SIZE / sizeof(struct sc_info) + 1)
+#define MAX_FRAMES_PER_PACKET (MAX_USB_FRAME_SIZE / sizeof(struct sc_info) + 1)
 
 // Worst case size of a pcapng formatted packet, including pcapng overhead.
 #define MAX_PCAPNG_PACKET_SIZE (MAX_ETH_FRAME_SIZE + 2048)
@@ -210,7 +237,8 @@ static struct grabber_packet *packet_fifo_read_next(struct grabber *gr,
             // If there's no new packet, use the last idle TS. Due to buffering,
             // an endpoint with no packets may still receive frames that are
             // _older_ than the already received packets on the other endpoint.
-            // The idle TS indicates whether there were no new packets for sure.
+            // The idle TS indicates that there will be no new packets with a
+            // lower TS on this endpoint.
             uint64_t next_ts = fifo->last_hw_ts;
 
             bool have_packets = fifo->stats.sw_frames < fifo->frames_written;

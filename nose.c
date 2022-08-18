@@ -219,6 +219,7 @@ struct nose_ctx {
     struct timer *check_links_timer;
     struct timer *grabber_status_timer;
     struct timer *exit_timer;
+    struct timer *hw_info_timer;
     struct grabber_status grabber_status_prev;
     bool grabber_speed_test;
     struct pipe *ipc_server;
@@ -1433,14 +1434,18 @@ static void cmd_inject_stop(struct command_ctx *cctx, struct command_param *para
 #define NUM32_OR_INF(i) \
     ((i) == UINT32_MAX ? "inf" : stack_sprintf(40, "%"PRIu32, i))
 
-static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
-                        size_t num_params)
+static void show_hw_info(struct command_ctx *cctx)
 {
+    struct nose_ctx *ctx = cctx->priv;
+
     LOG(cctx, "Host tool version: %s\n", version);
 
     struct device *dev = require_dev(cctx);
-    if (!dev)
+    if (!dev) {
+        timer_destroy(ctx->hw_info_timer);
+        ctx->hw_info_timer = NULL;
         return;
+    }
 
     struct libusb_device_descriptor desc;
     if (!libusb_get_device_descriptor(libusb_get_device(dev->dev), &desc)) {
@@ -1570,6 +1575,37 @@ static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
                 state.disrupt_affected);
         }
     }
+}
+
+static void hw_info_on_timer(void *ud, struct timer *t)
+{
+    struct nose_ctx *ctx = ud;
+
+    // a bit of it a hack
+    struct command_ctx cctx = {
+        .log = ctx->log,
+        .priv = ctx,
+    };
+    show_hw_info(&cctx);
+}
+
+static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
+                        size_t num_params)
+{
+    struct nose_ctx *ctx = cctx->priv;
+
+    int time = params[0].p_int;
+    if (time > 0) {
+        if (!ctx->hw_info_timer)
+            ctx->hw_info_timer = event_loop_create_timer(ctx->ev);
+        timer_set_on_timer(ctx->hw_info_timer, ctx, hw_info_on_timer);
+        timer_start(ctx->hw_info_timer, time);
+    } else if (time == 0) {
+        timer_destroy(ctx->hw_info_timer);
+        ctx->hw_info_timer = NULL;
+    }
+
+    show_hw_info(cctx);
 }
 
 static void cmd_dev_reset_settings(struct command_ctx *cctx,
@@ -2095,7 +2131,11 @@ const struct command_def command_list[] = {
     {"inject_stop", "Disable packet injector", cmd_inject_stop, {
         PHY_SELECT_DEF("AB"),
     }},
-    {"hw_info", "Show hardware information", cmd_hw_info},
+    {"hw_info", "Show hardware information", cmd_hw_info, {
+        {"update", COMMAND_PARAM_TYPE_INT64, "0",
+            "Update period in MS (0 disables)",
+            .irange = {0, 100000}},
+    }},
     {"reset_device_settings", "Reset settings stored on the device to defaults.",
         cmd_dev_reset_settings },
     {"cfg_packet", "Write raw config command packet", cmd_cfg_packet, {
@@ -2692,6 +2732,9 @@ static void on_terminate(void *ud, struct event_loop *ev)
 
     timer_destroy(ctx->latency_tester_timer);
     ctx->latency_tester_timer = NULL;
+
+    timer_destroy(ctx->hw_info_timer);
+    ctx->hw_info_timer = NULL;
 
     pipe_destroy(ctx->extcap_ctrl_in);
     ctx->extcap_ctrl_in = NULL;

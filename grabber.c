@@ -653,6 +653,14 @@ static int check_packet(struct grabber *gr, struct packet_fifo *fifo,
         return -1;
     }
 
+    // fw 1.09: packet size is clamped to max if not representable
+    if (info->payload_bytecount == 0xFFFF) {
+        // But not sure what should be done.
+        HINT(gr, "port: %u: warning: over-large packet detected, output of this"
+                 "packet and some packets before may be unreliable",
+             fifo->interface);
+    }
+
     size_t packet_space = (info->payload_bytecount + 3) & (~(size_t)3);
 
     if (packet_space > *pos - sizeof(*info)) {

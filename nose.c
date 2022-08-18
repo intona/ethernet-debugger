@@ -1527,22 +1527,22 @@ static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
             }
 
             if (state.packets_valid) {
-                LOG(cctx, "    Packets (mod 2^31): %"PRIu32"\n",
+                LOG(cctx, "    Packets (mod 2^32): %"PRIu32"\n",
                     state.packets);
             }
 
             if (state.sym_error_bytes_valid) {
-                LOG(cctx, "    Symbol error bytes (mod 2^31): %"PRIu32"\n",
+                LOG(cctx, "    Symbol error bytes (mod 2^32): %"PRIu32"\n",
                     state.sym_error_bytes);
             }
 
             if (state.crc_error_count_valid) {
-                LOG(cctx, "    Packets with CRC error (mod 2^31): %"PRIu32"\n",
+                LOG(cctx, "    Packets with CRC error (mod 2^32): %"PRIu32"\n",
                     state.crc_error_count);
             }
 
             if (state.reset_count_valid) {
-                LOG(cctx, "    Port FIFO overflows (mod 2^31): %"PRIu32"\n",
+                LOG(cctx, "    Port FIFO overflows (mod 2^32): %"PRIu32"\n",
                     state.reset_count);
             }
 

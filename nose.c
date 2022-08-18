@@ -1637,6 +1637,16 @@ static void cmd_exit(struct command_ctx *cctx, struct command_param *params,
     event_loop_request_terminate(ctx->ev);
 }
 
+static void cmd_reboot(struct command_ctx *cctx, struct command_param *params,
+                       size_t num_params)
+{
+    struct device *dev = require_dev(cctx);
+    if (!dev)
+        return;
+
+    usb_reboot(dev->dev, cctx->log);
+}
+
 static void on_send_test(void *ud, struct timer *t)
 {
     struct nose_ctx *ctx = ud;
@@ -2116,6 +2126,7 @@ const struct command_def command_list[] = {
         {"out-file", COMMAND_PARAM_TYPE_STR, "", "write results to this file"},
     }},
     {"exit", "Exit program", cmd_exit },
+    {"reboot", "Restart device", cmd_reboot},
     {0}
 };
 

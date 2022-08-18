@@ -117,6 +117,7 @@ struct packet_fifo {
     struct byte_fifo data;      // footers turned headers + raw packet data
 
     // --- accessed under fifo_mutex
+    bool need_wakeup;           // need to be notified of new packets
     uint64_t frames_written;    // number of frames queued to FIFO
     uint32_t hw_last_seq;       // previous packet sequence number
     uint64_t last_hw_ts;        // last known hardware timestamp (frame/idle)
@@ -128,6 +129,8 @@ struct packet_fifo {
     uint64_t dropped_total_prev;// dropped_total before newest frame
     uint64_t num_crcerr;        // indirection for synchronization
     uint8_t packet_buffer[MAX_ETH_FRAME_SIZE]; // temp. buffer for packet
+    bool have_next_pkt;
+    struct sc_info next_pkt;
     struct grabber_packet packet; // temp. packet memory
     struct grabber_interface gr_iface;
 
@@ -248,18 +251,25 @@ static struct grabber_packet *packet_fifo_read_next(struct grabber *gr,
             // lower TS on this endpoint.
             uint64_t next_ts = fifo->last_hw_ts;
 
-            bool have_packets = fifo->stats.sw_frames < fifo->frames_written;
-            if (have_packets) {
-                // Look at the next frame's timestamp.
-                struct sc_info tmp;
-                size_t r = byte_fifo_peek(&fifo->data, &tmp, sizeof(tmp));
-                assert(r == sizeof(tmp)); // ring buffer logic guarantees this
-                assert(tmp.magic == 0xABCD);
-                next_ts = SC_INFO_TIMESTAMP(tmp);
+            if (!fifo->have_next_pkt) {
+                if (fifo->stats.sw_frames < fifo->frames_written) {
+                    size_t r = byte_fifo_read(&fifo->data, &fifo->next_pkt,
+                                              sizeof(fifo->next_pkt));
+                    // ring buffer logic guarantees this
+                    assert(r == sizeof(fifo->next_pkt));
+                    assert(fifo->next_pkt.magic == 0xABCD);
+                    fifo->have_next_pkt = true;
+                }
             }
 
-            if (next_ts <= read_fifo_ts) {
-                read_fifo = have_packets ? fifo : NULL;
+            fifo->need_wakeup = !fifo->have_next_pkt;
+
+            // Look at the next frame's timestamp.
+            if (fifo->have_next_pkt)
+                next_ts = SC_INFO_TIMESTAMP(fifo->next_pkt);
+
+            if (next_ts < read_fifo_ts) {
+                read_fifo = fifo->have_next_pkt ? fifo : NULL;
                 read_fifo_ts = next_ts;
             }
 
@@ -283,8 +293,10 @@ static struct grabber_packet *packet_fifo_read_next(struct grabber *gr,
     }
 
     assert(read_fifo);
+    assert(read_fifo->have_next_pkt);
 
     read_fifo->stats.sw_frames++;
+    read_fifo->have_next_pkt = false;
 
     read_fifo->dropped_total_prev = read_fifo->dropped_total;
     read_fifo->dropped_total =
@@ -294,15 +306,14 @@ static struct grabber_packet *packet_fifo_read_next(struct grabber *gr,
 
     pthread_mutex_unlock(&gr->fifo_mutex);
 
-    struct sc_info info;
-    size_t r = byte_fifo_read(&read_fifo->data, &info, sizeof(info));
-    assert(r == sizeof(info)); // ring buffer logic guarantees this
+    struct sc_info info = read_fifo->next_pkt;
 
     size_t aligned_size = (info.payload_bytecount + 3) & (~(size_t)3);
 
     assert(aligned_size <= MAX_ETH_FRAME_SIZE);
 
-    r = byte_fifo_read(&read_fifo->data, read_fifo->packet_buffer, aligned_size);
+    size_t r =
+        byte_fifo_read(&read_fifo->data, read_fifo->packet_buffer, aligned_size);
     assert(r == aligned_size); // ring buffer logic guarantees this
 
     read_fifo->packet = (struct grabber_packet){
@@ -588,7 +599,10 @@ static void transmit_packet(struct grabber *gr, struct packet_fifo *fifo,
 
     if (ok) {
         fifo->frames_written++;
-        pthread_cond_signal(&gr->fifo_wakeup);
+        if (fifo->need_wakeup) {
+            fifo->need_wakeup = false;
+            pthread_cond_signal(&gr->fifo_wakeup);
+        }
     } else {
         fifo->stats.sw_dropped++;
     }

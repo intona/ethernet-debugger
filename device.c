@@ -333,7 +333,7 @@ static void debug_on_receive(struct usb_ep *ep, void *data, size_t size)
     if (size && s[size - 1] == '\n')
         size -= 1;
 
-    LOG(dev->global, "Device debug output: %.*s\n", (int)size, s);
+    HINT(dev->global, "Device debug output: %.*s\n", (int)size, s);
 }
 
 static void cfg_error(struct usb_ep *ep, enum libusb_error error)

@@ -961,16 +961,14 @@ static void on_grabber_status_timer(void *ud, struct timer *t)
         double last_link_down = ctx->last_link_down_time[p]
             ? (get_time_us() - ctx->last_link_down_time[p]) / 1e6 : 0;
 
-        const int mib = 1024 * 1024;
-
         LOG(ctx,
             " Port %s: Packets transmitted (delta): %"PRIu64" (%"PRIu64")\n"
-            "         Bytes captured (delta): %"PRId64" MiB (%"PRIu64" MiB)\n",
+            "         Bytes captured (delta): %s (%s)\n",
             port_names[DEV_PORT_FROM_INDEX(p)],
             pst.num_packets,
             pst.num_packets - pst_prev.num_packets,
-            pst.num_bytes / mib,
-            (pst.num_bytes - pst_prev.num_bytes) / mib);
+            format_byte_count(pst.num_bytes),
+            format_byte_count(pst.num_bytes - pst_prev.num_bytes));
 
         if (ctx->grabber_speed_test)
             continue; // the stats below are not set in this mode

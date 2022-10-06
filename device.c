@@ -688,7 +688,7 @@ int device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
 {
     uint32_t gap = params->gap;
     if (!gap)
-        gap = 12;
+        gap = ETHERNET_MIN_GAP;
 
     static_assert(DEV_INJECT_ETH_BUF_SIZE < (1 << 30) / 4, "possibly overflows");
     if (params->data_size > DEV_INJECT_ETH_BUF_SIZE ||

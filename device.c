@@ -653,6 +653,35 @@ static bool device_inject_pkt_old(struct logfn logfn, struct device *dev, unsign
     return success;
 }
 
+static void compute_sizes(const struct device_inject_params *params,
+                          size_t *out_size, size_t *out_extra_zeros)
+{
+    size_t extra_zeros = 0;
+    size_t size = params->data_size;
+
+    size += params->append_random;
+    size += params->append_zero;
+
+    if (!params->raw) {
+        size += 4; // FCS
+        if (size < 64 && !params->nopad) {
+            extra_zeros = 64 - size;
+            size += extra_zeros;
+        }
+        size += 8; // preamble, SFD
+    }
+
+    *out_size = size;
+    *out_extra_zeros = extra_zeros;
+}
+
+size_t device_inject_get_raw_length(const struct device_inject_params *params)
+{
+    size_t size, extra_zeros;
+    compute_sizes(params, &size, &extra_zeros);
+    return size;
+}
+
 // Send packet injector command.
 int device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
                       const struct device_inject_params *params)
@@ -676,18 +705,8 @@ int device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
         return -1;
     }
 
-    size_t size = params->data_size;
-    size += params->append_random;
-    size += params->append_zero;
-    size_t extra_zeros = 0;
-    if (!params->raw) {
-        size += 4; // FCS
-        if (size < 64 && !params->nopad) {
-            extra_zeros = 64 - size;
-            size += extra_zeros;
-        }
-        size += 8; // preamble, SFD
-    }
+    size_t size, extra_zeros;
+    compute_sizes(params, &size, &extra_zeros);
 
     if (size > DEV_INJECT_ETH_BUF_SIZE) {
         logline(logfn, "error: packet too large\n");

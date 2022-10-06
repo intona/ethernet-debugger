@@ -108,6 +108,10 @@ struct device_inject_params {
 int device_inject_pkt(struct logfn logfn, struct device *dev, unsigned ports,
                       const struct device_inject_params *params);
 
+// Return size of the raw packet that would get injected.
+// (Not correct if loop_count is used.)
+size_t device_inject_get_raw_length(const struct device_inject_params *params);
+
 enum device_disrupt_mode {
     DEVICE_DISRUPT_BIT_FLIP,    // invert a pseudo-random bit
     DEVICE_DISRUPT_BIT_ERR,     // make PHY emit invalid ethernet symbol

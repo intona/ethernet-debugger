@@ -167,6 +167,11 @@ char *stack_sprintf_impl(char *buf, size_t buf_size, const char *fmt, ...);
 #define stack_sprintf(SIZE, ...) \
     stack_sprintf_impl((char[SIZE]){0}, SIZE, __VA_ARGS__)
 
+char *format_byte_count_impl(char *buf, size_t buf_size, uint64_t byte_count);
+
+// Pretty print a byte count, e.g. 1024 => "1 KiB"
+#define format_byte_count(bc) format_byte_count_impl((char[80]){0}, 80, (bc))
+
 // Return smallest power of 2 with res>=v. Returns 0 for v==0 and v>2^sizebits/2.
 size_t round_up_power_of_2(size_t v);
 // Return largest power of 2 with res<=v. Returns 0 for v==0.

@@ -176,6 +176,21 @@ char *stack_sprintf_impl(char *buf, size_t buf_size, const char *fmt, ...)
     return buf;
 }
 
+char *format_byte_count_impl(char *buf, size_t buf_size, uint64_t byte_count)
+{
+    static const char *const names[] = {"B", "KiB", "MiB", "GiB", "TiB"};
+    uint64_t base = 1;
+    size_t index = 0;
+    while (byte_count >= base * 1024 && index + 1 < ARRAY_LENGTH(names)) {;
+        base *= 1024;
+        index += 1;
+    }
+    snprintf(buf, buf_size, "%"PRIu64" %s",
+             (byte_count + base / 2) / base,
+             names[index]);
+    return buf;
+}
+
 size_t round_up_power_of_2(size_t v)
 {
     if (!v)

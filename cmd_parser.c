@@ -195,8 +195,11 @@ static bool parse_value(struct logfn log, const char *name,
             char *end_num = NULL;
             int64_t ival = strtoll(val, &end_num, 0);
             if (end_num != end || end == val || errno) {
-                logline(log, "error: %s requires an integer, not '%s'.\n",
-                        name, val);
+                char *extra = "";
+                if (def->type == COMMAND_PARAM_TYPE_INT64_S)
+                    extra = " (optional kib, mib, or gib suffix)";
+                logline(log, "error: %s requires an integer%s, not '%s'.\n",
+                        name, extra, val);
                 return false;
             }
             if ((ival < 0 && mult > 1) || (ival > 0 && ival > INT64_MAX / mult)) {

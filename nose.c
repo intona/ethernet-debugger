@@ -1407,6 +1407,53 @@ static void cmd_inject(struct command_ctx *cctx, struct command_param *params,
     p.data = bytes;
     p.data_size = size;
 
+    int64_t bw_bytes = params[12].p_int;
+    int64_t bw_pkts = params[13].p_int;
+
+    if (bw_bytes || bw_pkts) {
+        if ((p.num_packets == 1 || p.num_packets == UINT32_MAX) && p.loop_count == 0) {
+            int64_t rawlen = device_inject_get_raw_length(&p);
+
+            if (rawlen < 1) {
+                LOG(cctx, "error: packet with length 0\n");
+                goto done;
+            }
+
+            struct phy_status st[2];
+            device_get_phy_status(dev, DEV_PORT_A, &st[0]);
+            device_get_phy_status(dev, DEV_PORT_B, &st[1]);
+            if (!st[0].link || !st[1].link || !st[0].speed ||
+                st[0].speed != st[1].speed)
+            {
+                LOG(cctx, "error: not both links up and at the same speed\n");
+                goto done;
+            }
+
+            int64_t clocks_per_sec = 125000000;
+            switch (st[0].speed) {
+            case 10: clocks_per_sec = 1250000; break;
+            case 100: clocks_per_sec = 12500000; break;
+            }
+
+            if (bw_bytes) {
+                int64_t unused = clocks_per_sec - bw_bytes;
+                p.gap = unused < 0 ? 0 : unused * rawlen / bw_bytes;
+            } else if (bw_pkts) {
+                int64_t bytes_per_pkt = clocks_per_sec / bw_pkts;
+                p.gap = bytes_per_pkt <= rawlen ? 0 : bytes_per_pkt - rawlen;
+            }
+
+            if (p.gap < ETHERNET_MIN_GAP) {
+                LOG(cctx, "error: cannot reach bandwidth\n");
+                goto done;
+            }
+
+            p.num_packets = UINT32_MAX;
+        } else {
+            LOG(cctx, "warning: --bw-bytes/--bw-packets ignored\n");
+        }
+    }
+
     cctx->success = device_inject_pkt(cctx->log, dev, ports, &p) >= 0;
 
 done:
@@ -2125,6 +2172,12 @@ const struct command_def command_list[] = {
             .irange = {0, DEV_INJECT_ETH_BUF_SIZE}},
         {"nopad", COMMAND_PARAM_TYPE_BOOL, "false",
             "do not pad short packets to mandatory packet length"},
+        {"bw-bytes",  COMMAND_PARAM_TYPE_INT64_S, "0",
+            "set gap repeat packets to reach this bytes/second rate",
+            .irange = {0, 125000000}},
+        {"bw-packets", COMMAND_PARAM_TYPE_INT64, "0",
+            "set gap to repeat this many packets per second",
+            .irange = {0, 125000000 / 2}},
     }},
     {"inject_stop", "Disable packet injector", cmd_inject_stop, {
         PHY_SELECT_DEF("AB"),

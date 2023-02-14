@@ -25,7 +25,7 @@ void logfn_stdio(void *ctx, const char *fmt, va_list va)
 
 int snprintf_append(char *buf, size_t size, int offset, const char *format, ...)
 {
-    if (offset >= 0 || (size_t)offset < size) {
+    if (offset >= 0 && (size_t)offset < size) {
         buf += offset;
         size -= offset;
     } else {

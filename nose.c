@@ -2173,7 +2173,7 @@ const struct command_def command_list[] = {
         {"nopad", COMMAND_PARAM_TYPE_BOOL, "false",
             "do not pad short packets to mandatory packet length"},
         {"bw-bytes",  COMMAND_PARAM_TYPE_INT64_S, "0",
-            "set gap repeat packets to reach this bytes/second rate",
+            "set gap to repeat packets to reach this bytes/second rate",
             .irange = {0, 125000000}},
         {"bw-packets", COMMAND_PARAM_TYPE_INT64, "0",
             "set gap to repeat this many packets per second",

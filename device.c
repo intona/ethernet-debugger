@@ -372,6 +372,9 @@ void device_close(struct device *dev)
     }
 }
 
+#define IN_USE_MSG \
+    "This error can happen if another process has the device still opened.\n"
+
 struct device *device_open_with_handle(struct global *global,
                                        struct libusb_device_handle *udev)
 {
@@ -392,6 +395,7 @@ struct device *device_open_with_handle(struct global *global,
 
     if (libusb_claim_interface(udev, 0)) {
         LOG(global, "Could not claim USB interface.\n");
+        LOG(global, IN_USE_MSG);
         goto fail;
     }
 
@@ -495,10 +499,13 @@ struct device *device_open(struct global *global, const char *devname)
             return NULL;
         }
 
-        if (libusb_open(usb_dev_ref, &handle) != 0) {
+        int err = libusb_open(usb_dev_ref, &handle);
+        if (err != 0) {
             libusb_unref_device(usb_dev_ref);
-            LOG(global, "Could not not find or access device '%s' with libusb.\n",
-                devname);
+            LOG(global, "Could not not find or access device '%s' (libusb error: %s)\n",
+                devname, libusb_error_name(err));
+            if (err == LIBUSB_ERROR_ACCESS)
+                LOG(global, IN_USE_MSG);
             return NULL;
         }
 

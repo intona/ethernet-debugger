@@ -179,6 +179,11 @@ struct grabber {
 
 static const int EPs[2] = {0x81, 0x82};
 
+struct pcapng_opts {
+    int link_type;
+    bool strip_fcs;
+};
+
 static void write_pcapng_block_size(struct wbuf *w, size_t start)
 {
     size_t pos = w->pos;
@@ -186,6 +191,53 @@ static void write_pcapng_block_size(struct wbuf *w, size_t start)
     uint32_t len = pos + 4 - start;
     memcpy(w->ptr + start + 4, &len, 4);
     wbuf_write32(w, len);
+}
+
+static void write_pcapng_header(struct wbuf *buf, struct pcapng_opts *opts)
+{
+    // section header block
+    size_t pos = 0;
+    wbuf_write32(buf, 0x0A0D0D0A); // block type
+    wbuf_write32(buf, 0); // block total length
+    wbuf_write32(buf, 0x1A2B3C4D); // byte order magic
+    wbuf_write32(buf, 1); // version
+    wbuf_write64(buf, -1); // section length
+    // options end
+    wbuf_write32(buf, 0);
+    // block end
+    write_pcapng_block_size(buf, pos);
+
+    // Note: we write 2 interface blocks for both directions. But we could also
+    //       just use 1 interface and set the inbound/outbound flags.
+    //       Using separate interfaces lets us set different names, though.
+    for (int n = 0; n < 2; n++) {
+        // interface description block
+        pos = buf->pos;
+        wbuf_write32(buf, 1);
+        wbuf_write32(buf, 0);
+        wbuf_write32(buf, opts->link_type); // LinkType
+        wbuf_write32(buf, 0); // SnapLen
+        // option: if_fcslen
+        wbuf_write16(buf, 13); // if_fcslen
+        wbuf_write16(buf, 1); // 1 byte length
+        wbuf_write8(buf, opts->strip_fcs ? 0 : 4); // value: 0 or 4 bytes
+        wbuf_write_pad32(buf);
+        // option: if_name
+        const char *if_name = n == 0 ? "Port A" : "Port B";
+        wbuf_write16(buf, 2); // if_name
+        wbuf_write16(buf, strlen(if_name)); // length
+        wbuf_write(buf, if_name, strlen(if_name));
+        wbuf_write_pad32(buf);
+        // option: if_tsresol (timestamp resolution)
+        wbuf_write16(buf, 9); // if_tsresol
+        wbuf_write16(buf, 1); // 1 byte length
+        wbuf_write8(buf, 9); // value: 10^-9 => nanoseconds
+        wbuf_write_pad32(buf);
+        // options end
+        wbuf_write32(buf, 0);
+        // block end
+        write_pcapng_block_size(buf, pos);
+    }
 }
 
 static bool write_pipe(int fd, const void *data, size_t size)
@@ -336,8 +388,10 @@ static void *writer_thread(void *ptr)
     // Temporary buffer used for headers and packets.
     size_t wbuf_size = MAX_PCAPNG_PACKET_SIZE * 1000;
     int output_fd = -1;
-    int link_type = gr->fifos[0].gr_iface.pcap_linktype;
-    bool strip_fcs = gr->strip_fcs;
+    struct pcapng_opts popts = {
+        .link_type = gr->fifos[0].gr_iface.pcap_linktype,
+        .strip_fcs = gr->strip_fcs,
+    };
     struct wbuf buf = {0};
 
     struct grabber_interface *ifaces[2] = {
@@ -379,49 +433,7 @@ static void *writer_thread(void *ptr)
             goto done;
         }
 
-        // section header block
-        size_t pos = 0;
-        wbuf_write32(&buf, 0x0A0D0D0A); // block type
-        wbuf_write32(&buf, 0); // block total length
-        wbuf_write32(&buf, 0x1A2B3C4D); // byte order magic
-        wbuf_write32(&buf, 1); // version
-        wbuf_write64(&buf, -1); // section length
-        // options end
-        wbuf_write32(&buf, 0);
-        // block end
-        write_pcapng_block_size(&buf, pos);
-
-        // Note: we write 2 interface blocks for both directions. But we could also
-        //       just use 1 interface and set the inbound/outbound flags.
-        //       Using separate interfaces lets us set different names, though.
-        for (int n = 0; n < 2; n++) {
-            // interface description block
-            pos = buf.pos;
-            wbuf_write32(&buf, 1);
-            wbuf_write32(&buf, 0);
-            wbuf_write32(&buf, link_type); // LinkType
-            wbuf_write32(&buf, 0); // SnapLen
-            // option: if_fcslen
-            wbuf_write16(&buf, 13); // if_fcslen
-            wbuf_write16(&buf, 1); // 1 byte length
-            wbuf_write8(&buf, strip_fcs ? 0 : 4); // value: 0 or 4 bytes
-            wbuf_write_pad32(&buf);
-            // option: if_name
-            const char *if_name = n == 0 ? "Port A" : "Port B";
-            wbuf_write16(&buf, 2); // if_name
-            wbuf_write16(&buf, strlen(if_name)); // length
-            wbuf_write(&buf, if_name, strlen(if_name));
-            wbuf_write_pad32(&buf);
-            // option: if_tsresol (timestamp resolution)
-            wbuf_write16(&buf, 9); // if_tsresol
-            wbuf_write16(&buf, 1); // 1 byte length
-            wbuf_write8(&buf, 9); // value: 10^-9 => nanoseconds
-            wbuf_write_pad32(&buf);
-            // options end
-            wbuf_write32(&buf, 0);
-            // block end
-            write_pcapng_block_size(&buf, pos);
-        }
+        write_pcapng_header(&buf, &popts);
 
         flush_wbuf_to_pipe(gr, output_fd, &buf);
     }
@@ -474,12 +486,12 @@ static void *writer_thread(void *ptr)
         }
 
         // The ethernet link type doesn't want the preamble/SFD.
-        if (link_type == LINKTYPE_ETHERNET) {
+        if (popts.link_type == LINKTYPE_ETHERNET) {
             pcap_data += preamble_len;
             pcap_len -= preamble_len;
         }
 
-        if (strip_fcs && pcap_len > 4)
+        if (popts.strip_fcs && pcap_len > 4)
             pcap_len -= 4;
 
         if (buf.ptr) {

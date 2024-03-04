@@ -1991,23 +1991,23 @@ static void on_extcap_ctrl_in(void *ud, struct pipe *p, unsigned events)
         // Shouldn't happen.
         pipe_read(p, NULL, buf_size);
         LOG(ctx, "error parsing extcap input\n");
-        return;
+        goto done;
     }
 
     if (buf_size < 6) {
         pipe_read_more(p);
-        return;
+        goto done;
     }
 
     int size = (pkt[1] << 16) | (pkt[2] << 8) | pkt[3];
     if (size < 2) {
         pipe_read(p, NULL, buf_size);
         LOG(ctx, "invalid extcap input\n");
-        return;
+        goto done;
     }
     if (buf_size < 4 + size) {
         pipe_read_more(p);
-        return;
+        goto done;
     }
 
     // ctrl_number is associated with the "number=" argument in the controls
@@ -2047,6 +2047,7 @@ static void on_extcap_ctrl_in(void *ud, struct pipe *p, unsigned events)
 
     pipe_read(p, NULL, 4 + size);
 
+done:
     if (events & PIPE_EVENT_CLOSED_READ) {
         pipe_destroy(p);
         ctx->extcap_ctrl_in = NULL;

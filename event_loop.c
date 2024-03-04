@@ -553,6 +553,14 @@ static void pipe_work(struct event_loop_item *item)
         }
     }
 
+    if (p->os.error || (events & PIPE_EVENT_ERROR)) {
+        events |= PIPE_EVENT_ERROR;
+        p->os.error = false;
+
+        // Treat as closed.
+        p->os.flags &= ~(unsigned)(PIPE_FLAG_READ | PIPE_FLAG_WRITE);
+    }
+
     if (p->os.can_write && (p->flags & PIPE_FLAG_WRITE) && p->write_buf.size) {
         size_t r = os_pipe_write(&p->os, p->write_buf.data, p->write_buf.size);
         buffer_skip(&p->write_buf, r);
@@ -574,11 +582,6 @@ static void pipe_work(struct event_loop_item *item)
         if (p->write_buf.size)
             events |= PIPE_EVENT_ERROR;
         p->write_buf.size = 0;
-    }
-
-    if (p->os.error) {
-        events |= PIPE_EVENT_ERROR;
-        p->os.error = false;
     }
 
     if (p->close_on_write_done && (events & PIPE_EVENT_ALL_WRITTEN)) {

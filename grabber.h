@@ -139,4 +139,8 @@ void grabber_filter_destroy(struct grabber_filter *filt);
 // Attempt to append the given string to the current packet comments.
 void grabber_packet_add_comment(struct grabber_packet *pkt, const char *str);
 
+// Get a pcapng file header. Needed in weird situations to make pcap happy.
+// *res is set to a malloc()ed buffer. On OOM, returns res=res_sz=0.
+void grabber_get_pcap_dummy_header(void **res, size_t *res_sz);
+
 #endif

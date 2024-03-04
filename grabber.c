@@ -382,6 +382,27 @@ static struct grabber_packet *packet_fifo_read_next(struct grabber *gr,
     return &read_fifo->packet;
 }
 
+void grabber_get_pcap_dummy_header(void **res, size_t *res_sz)
+{
+    size_t wbuf_size = MAX_PCAPNG_PACKET_SIZE;
+    struct wbuf buf = {
+        .ptr = malloc(wbuf_size),
+        .size = wbuf_size,
+    };
+
+    if (buf.ptr) {
+        struct pcapng_opts popts = {
+            .link_type = LINKTYPE_ETHERNET,
+        };
+        write_pcapng_header(&buf, &popts);
+    } else {
+        buf.size = 0;
+    }
+
+    *res = buf.ptr;
+    *res_sz = buf.size;
+}
+
 static void *writer_thread(void *ptr)
 {
     struct grabber *gr = ptr;

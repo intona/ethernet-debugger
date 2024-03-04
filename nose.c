@@ -229,7 +229,10 @@ struct nose_ctx {
     atomic_int log_r_len;
     bool mute_terminal;
     bool extcap_active;
-    struct pipe *extcap_ctrl_in, *extcap_ctrl_out;
+    struct pipe *extcap_ctrl_in, *extcap_ctrl_out, *extcap_fake_fifo;
+    char *extcap_prelog;
+    size_t extcap_prelog_sz;
+    bool extcap_prelog_done;
     char *fifo_path; // for delete-on-exit
     char *wireshark_path;
     // Put all log output through a FIFO. Makes dealing with text from random
@@ -532,22 +535,41 @@ static void log_write_hint(void *pctx, const char *fmt, va_list va)
     log_write_lev(pctx, fmt, va, 2);
 }
 
+static void extcap_send_msg(struct nose_ctx *ctx, uint8_t control,
+                            uint8_t command, void *data, size_t data_sz)
+{
+    if (!ctx->extcap_ctrl_out)
+        return;
+
+    if (data_sz >= (1u << 16) - 2)
+        return;
+
+    uint16_t size = 2 + data_sz;
+    uint8_t header[6] = {
+        'T',
+        size >> 16, (size >> 8) & 0xFF, size & 0xFF,
+        control,
+        command,
+    };
+
+    pipe_write(ctx->extcap_ctrl_out, &header, sizeof(header));
+    pipe_write(ctx->extcap_ctrl_out, data, data_sz);
+}
+
 static void log_extcap(struct nose_ctx *ctx, char *line)
 {
     if (!ctx->extcap_ctrl_out)
         return;
 
-    int line_len = strlen(line);
-    int size = 2 + line_len;
-    uint8_t header[6] = {
-        'T',
-        size >> 16, (size >> 8) & 0xFF, size & 0xFF,
-        1,
-        2
-    };
+    size_t line_len = strlen(line);
 
-    pipe_write(ctx->extcap_ctrl_out, &header, sizeof(header));
-    pipe_write(ctx->extcap_ctrl_out, line, line_len);
+    if (!ctx->extcap_prelog_done) {
+        XEXTEND_ARRAY(ctx->extcap_prelog, ctx->extcap_prelog_sz, line_len);
+        memcpy(ctx->extcap_prelog + ctx->extcap_prelog_sz, line, line_len);
+        ctx->extcap_prelog_sz += line_len;
+    }
+
+    extcap_send_msg(ctx, 1, 2, line, line_len);
 }
 
 // For use with json_out_init_cb() + writing to a struct pipe in *ctx.
@@ -2954,10 +2976,44 @@ int main(int argc, char **argv)
             // anyway.
             if (ctx->opts.device[0]) {
                 LOG(ctx, "Exiting because device could not be opened.\n");
-                goto error_exit;
+                if (!ctx->extcap_active)
+                    goto error_exit;
             }
         }
+
+        if (!dev && ctx->extcap_active) {
+            // Failure in extcap mode: this is a mess because of how Wireshark
+            // acts and blocking pipe open calls etc.
+            // Beware that Wireshark can remain broken if the extcap binary
+            // "misbehaves" once and leaves it around as zombie. (Try restarting
+            // Wireshark when debugging this and it seems to act weird.)
+            if (ctx->opts.capture_to[0]) {
+                ctx->extcap_fake_fifo = event_loop_open_pipe(ctx->ev,
+                    ctx->opts.capture_to, PIPE_FLAG_WRITE | PIPE_FLAG_OPEN_BLOCK);
+            }
+            void *buf;
+            size_t sz;
+            grabber_get_pcap_dummy_header(&buf, &sz);
+            if (sz)
+                pipe_write(ctx->extcap_fake_fifo, buf, sz);
+            // Just wait until the mainloop has written the data and exit after
+            // a while. This is just a workaround so no effort is made to check
+            // when writing has finished; the timeout is needed to avoid another
+            // annoying Wireshark interaction error message.
+            ctx->opts.capture_to[0] = '\0';
+            ctx->opts.exit_on = 2;
+            ctx->opts.exit_timeout = 1;
+            // Show what happened as extcap error message.
+            flush_log(ctx);
+            if (ctx->extcap_prelog_sz)
+                extcap_send_msg(ctx, 0, 9, ctx->extcap_prelog, ctx->extcap_prelog_sz);
+        }
     }
+
+    ctx->extcap_prelog_done = true;
+    free(ctx->extcap_prelog);
+    ctx->extcap_prelog = NULL;
+    ctx->extcap_prelog_sz = 0;
 
     bool exit_on_capture_stop = false;
 
@@ -3048,6 +3104,7 @@ int main(int argc, char **argv)
     timer_destroy(ctx->exit_timer);
     pipe_destroy(ctx->signalfd);
     event_destroy(ctx->log_event);
+    pipe_destroy(ctx->extcap_fake_fifo);
     event_loop_destroy(ev);
 
     flush_log(ctx);

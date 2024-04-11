@@ -520,6 +520,25 @@ done:
     return success;
 }
 
+size_t usb_ep_out_get_in_flight(struct usb_ep *ep)
+{
+    if (!ep->p)
+        return false; // was never added
+
+    struct usb_ep_priv *p = ep->p;
+    struct usb_thread *ctx = p->ctx;
+    size_t cnt = 0;
+
+    pthread_mutex_lock(&ctx->lock);
+    for (size_t n = 0; n < p->num_transfers; n++) {
+        if (p->transfers[n] && p->transfers[n]->callback)
+            cnt++;
+    }
+    pthread_mutex_unlock(&ctx->lock);
+
+    return cnt;
+}
+
 void usb_ep_remove(struct usb_ep *ep)
 {
     if (ep->p) {

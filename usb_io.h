@@ -77,6 +77,11 @@ bool usb_ep_out_add(struct usb_thread *ctx, struct usb_ep *ep,
 // low volume transfers only.
 bool usb_ep_out_submit(struct usb_ep *ep, void *data, size_t size, unsigned timeout);
 
+// How many packets are pending for transmission and not finished yet. Transfers
+// can finish asynchronously while this function is returning, so this is only
+// an upper bound.
+size_t usb_ep_out_get_in_flight(struct usb_ep *ep);
+
 // Stop serving any callbacks from the endpoint immediately. Remaining transfers
 // are canceled and "orphaned".
 // Must not be called reentrant from usb_ep callbacks.

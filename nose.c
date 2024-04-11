@@ -3336,7 +3336,7 @@ int main(int argc, char **argv)
     if (!handle_extcap(ctx))
         goto error_exit;
 
-    if (strcmp(ctx->opts.device, "none") != 0) {
+    if (!ctx->usb_dev && strcmp(ctx->opts.device, "none") != 0) {
         struct device *dev = device_open(ctx->global, ctx->opts.device);
         if (dev) {
             handle_device_opened(ctx, dev);

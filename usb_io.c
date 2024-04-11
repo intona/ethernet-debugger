@@ -344,7 +344,8 @@ static bool resubmit(struct usb_ep_priv *p, struct libusb_transfer *tr,
     int r = libusb_submit_transfer(tr);
     if (!r)
         return true;
-    LOG(p->ctx, "USB submit error: %d (EP 0x%02x)\n", r, tr->endpoint);
+    LOG(p->ctx, "USB submit error: %d (%s) (EP 0x%02x)\n", r,
+        libusb_strerror(r), tr->endpoint);
     tr->callback = NULL;
     if (user_cb && p->ep && p->ep->on_error)
         p->ep->on_error(p->ep, r);

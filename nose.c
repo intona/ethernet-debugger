@@ -2218,6 +2218,53 @@ fail:
     }
 }
 
+static void cmd_usb_reenumerate(struct command_ctx *cctx,
+                                struct command_param *params,
+                                size_t num_params)
+{
+    struct nose_ctx *ctx = cctx->priv;
+
+    struct device *dev = require_dev(cctx);
+    if (!dev)
+        return;
+
+    if (dev->fw_version < 0x112) {
+        LOG(ctx, "Needs at least firmware version 1.12.\n");
+        return;
+    }
+
+    bool sspeed = params[0].p_bool;
+    bool switch_buf = params[1].p_bool;
+
+    char serial[USB_DEVICE_SERIAL_LEN];
+    usb_get_device_serial(libusb_get_device(dev->dev), serial, sizeof(serial));
+
+    libusb_control_transfer(dev->dev,
+        LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_DEVICE | LIBUSB_ENDPOINT_OUT,
+        switch_buf ? 0xD1 : 0xD0,
+        sspeed,
+        0x00,
+        NULL,
+        0,
+        USB_TIMEOUT);
+
+    usbdev_close(ctx);
+
+    // Wait until it's back.
+    // Note: Normally we shouldn't do a blocking wait (because our event loop
+    // and everything in the command code is asynchronous), but doing it async
+    // is too much of a PITA, and the control requests are synchronous anyway.
+    sleep(1);
+
+    struct device *new_dev = device_open(ctx->global, serial);
+    if (new_dev) {
+        handle_device_opened(ctx, new_dev);
+    } else {
+        LOG(ctx, "Could not reopen device.\n");
+        cctx->success = false;
+    }
+}
+
 static void write_to_pipe(void *ctx, const char *fmt, va_list va)
 {
     struct pipe *p = ctx;
@@ -2556,6 +2603,11 @@ const struct command_def command_list[] = {
     {"usb_speed_test", "Test USB connection speed only", cmd_usb_speed_test, {
         {"stop", COMMAND_PARAM_TYPE_BOOL, "false", "disable testing"},
         {"exit_after", COMMAND_PARAM_TYPE_INT64, "-1", "exit after this many rounds"},
+    }},
+    {"usb_reenumerate", "Make device re-enumerate", cmd_usb_reenumerate, {
+        {"sspeed", COMMAND_PARAM_TYPE_BOOL, "true", "enable superspeed mode"},
+        {"switch_buffers", COMMAND_PARAM_TYPE_BOOL, "false",
+            "larger loopback / smaller capture buffers"},
     }},
     {"exit", "Exit program", cmd_exit },
     {"reboot", "Restart device", cmd_reboot},

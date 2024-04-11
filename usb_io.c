@@ -46,7 +46,9 @@ struct usb_ep_priv {
     struct libusb_transfer **transfers;
     size_t num_transfers;
 
-    // Allocated for transfers with an IN EP.
+    // Memory for all transfers, num_transfers*packet_sz.
+    // Actually transfers, not USB packets.
+    size_t packet_sz;
     void *packet_mem;
 };
 
@@ -391,20 +393,7 @@ static LIBUSB_CALL void transfer_cb(struct libusb_transfer *tr)
                 ep->on_sent(ep, success);
         }
 
-        if (tr->flags & LIBUSB_TRANSFER_FREE_BUFFER) {
-            // We also use this flag to remove the transfer itself.
-            size_t index = (size_t)-1;
-            for (size_t n = 0; n < p->num_transfers; n++) {
-                if (p->transfers[n] == tr) {
-                    index = n;
-                    break;
-                }
-            }
-            assert(index != (size_t)-1);
-            p->transfers[index] = p->transfers[p->num_transfers - 1];
-            p->num_transfers--;
-            libusb_free_transfer(tr);
-        } else if (tr->endpoint & 0x80) {
+        if (tr->endpoint & 0x80) {
             if (!resubmit(p, tr, true))
                 libusb_interrupt_event_handler(ctx->usb_ctx);
         }
@@ -416,17 +405,23 @@ static LIBUSB_CALL void transfer_cb(struct libusb_transfer *tr)
     pthread_mutex_unlock(&ctx->lock);
 }
 
-static struct usb_ep_priv *ep_add(struct usb_thread *ctx, struct usb_ep *ep)
+static bool ep_add(struct usb_thread *ctx, struct usb_ep *ep,
+                   size_t num, size_t psize)
 {
+    pthread_mutex_lock(&ctx->lock);
+    bool success = false;
+    struct usb_ep_priv *p = NULL;
+
     assert(!ep->p);
+    assert(ep->dev);
     assert(!ctx->terminate);
 
     if (!EXTEND_ARRAY(ctx->eps, ctx->num_eps, 1))
-        return NULL;
+        goto done;
 
-    struct usb_ep_priv *p = ALLOC_PTRTYPE(p);
+    p = ALLOC_PTRTYPE(p);
     if (!p)
-        return NULL;
+        goto done;
 
     p->ctx = ctx;
 
@@ -437,19 +432,7 @@ static struct usb_ep_priv *ep_add(struct usb_thread *ctx, struct usb_ep *ep)
     // caller of usb_ep_in_add() must have held a reference already
     assert(p->dev->refcount > 1);
 
-    return p;
-}
-
-bool usb_ep_in_add(struct usb_thread *ctx, struct usb_ep *ep,
-                   size_t num, size_t psize)
-{
-    pthread_mutex_lock(&ctx->lock);
-    bool success = false;
-
-    struct usb_ep_priv *p = ep_add(ctx, ep);
-    if (!p)
-        goto done;
-
+    p->packet_sz = psize;
     p->packet_mem = calloc(num, psize);
     if (!p->packet_mem)
         goto done;
@@ -466,35 +449,37 @@ bool usb_ep_in_add(struct usb_thread *ctx, struct usb_ep *ep,
         libusb_fill_bulk_transfer(tr, p->dev->dev, ep->ep,
             (unsigned char *)p->packet_mem + n * psize, psize, NULL, p, 0);
 
-        if (!resubmit(p, tr, false))
+        if ((tr->endpoint & 0x80) && !resubmit(p, tr, false))
             goto done;
     }
 
     success = true;
 done:
-    if (success) {
-        ep->p = p;
-        p->ep = ep;
-    } else {
-        ep_remove(p);
-        p = NULL;
+    if (p) {
+        if (success) {
+            ep->p = p;
+            p->ep = ep;
+        } else {
+            ep_remove(p);
+            p = NULL;
+        }
     }
     pthread_mutex_unlock(&ctx->lock);
     return success;
 }
 
-bool usb_ep_out_add(struct usb_thread *ctx, struct usb_ep *ep)
+bool usb_ep_in_add(struct usb_thread *ctx, struct usb_ep *ep,
+                   size_t num, size_t psize)
 {
-    pthread_mutex_lock(&ctx->lock);
+    assert(ep->ep & 0x80); // API usage error
+    return ep_add(ctx, ep, num, psize);
+}
 
-    struct usb_ep_priv *p = ep_add(ctx, ep);
-    if (p) {
-        ep->p = p;
-        p->ep = ep;
-    }
-
-    pthread_mutex_unlock(&ctx->lock);
-    return !!ep->p;
+bool usb_ep_out_add(struct usb_thread *ctx, struct usb_ep *ep,
+                    size_t num, size_t psize)
+{
+    assert(!(ep->ep & 0x80)); // API usage error
+    return ep_add(ctx, ep, num, psize);
 }
 
 bool usb_ep_out_submit(struct usb_ep *ep, void *data, size_t size, unsigned timeout)
@@ -508,34 +493,27 @@ bool usb_ep_out_submit(struct usb_ep *ep, void *data, size_t size, unsigned time
 
     pthread_mutex_lock(&ctx->lock);
 
-    if (!EXTEND_ARRAY(p->transfers, p->num_transfers, 1))
+    if (size > p->packet_sz)
         goto done;
 
-    struct libusb_transfer *tr = libusb_alloc_transfer(0);
+    // Linear search: the number of buffers is relatively low, so O(n) is OK
+    struct libusb_transfer *tr = NULL;
+    for (size_t n = 0; n < p->num_transfers; n++) {
+        if (p->transfers[n] && !p->transfers[n]->callback) {
+            tr = p->transfers[n];
+            break;
+        }
+    }
+
     if (!tr)
         goto done;
 
-    // Frees the buffer; we also use it internally as flag to remove the
-    // transfer itself completely.
-    tr->flags |= LIBUSB_TRANSFER_FREE_BUFFER;
+    memcpy(tr->buffer, data, size);
 
-    void *data_copy = malloc(size);
-    if (!data_copy) {
-        libusb_free_transfer(tr);
-        goto done;
-    }
-    memcpy(data_copy, data, size);
+    tr->timeout = timeout;
+    tr->length = size;
 
-    libusb_fill_bulk_transfer(tr, p->dev->dev, ep->ep, data_copy, size,
-                              NULL, p, 0);
-
-    if (!resubmit(p, tr, false)) {
-        libusb_free_transfer(tr);
-        goto done;
-    }
-
-    p->transfers[p->num_transfers++] = tr;
-    success = true;
+    success = resubmit(p, tr, false);
 
 done:
     pthread_mutex_unlock(&ctx->lock);

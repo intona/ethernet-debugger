@@ -65,8 +65,9 @@ struct usb_ep {
 bool usb_ep_in_add(struct usb_thread *ctx, struct usb_ep *ep,
                    size_t num, size_t psize);
 
-// Add OUT ep without pre-allocation.
-bool usb_ep_out_add(struct usb_thread *ctx, struct usb_ep *ep);
+// Add OUT ep, see usb_ep_in_add().
+bool usb_ep_out_add(struct usb_thread *ctx, struct usb_ep *ep,
+                    size_t num, size_t psize);
 
 // Create, submit, and "register" a transfer to an OUT endpoint. Unlike just
 // doing the transfer manually with libusb_submit_transfer(), this attempts to

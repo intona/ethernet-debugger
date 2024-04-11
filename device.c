@@ -501,7 +501,7 @@ struct device *device_open_with_handle(struct global *global,
         .on_error = cfg_error,
         .user_data = dev,
     };
-    if (!usb_ep_in_add(global->usb_thr, &dev->cfg_in, 2, 16 * 1024))
+    if (!usb_ep_in_add(global->usb_thr, &dev->cfg_in, 2, CFG_BUF_WORDS * 4))
         goto fail;
 
     dev->cfg_out = (struct usb_ep){
@@ -510,7 +510,7 @@ struct device *device_open_with_handle(struct global *global,
         .on_sent = cfg_on_sent,
         .user_data = dev,
     };
-    if (!usb_ep_out_add(global->usb_thr, &dev->cfg_out))
+    if (!usb_ep_out_add(global->usb_thr, &dev->cfg_out, 2, CFG_BUF_WORDS * 4))
         goto fail;
 
     dev->debug_in = (struct usb_ep){

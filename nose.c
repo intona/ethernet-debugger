@@ -49,6 +49,8 @@
 #define SIZE_MAX ((size_t)-1)
 #endif
 
+#define LOOP_BUF_SZ (16 * 1024)
+
 extern char **environ;
 
 struct options {
@@ -213,6 +215,7 @@ struct nose_ctx {
     struct event_loop *ev;
     struct global *global;
     struct options opts;
+    int exit_status;
     struct event *phy_update_event;
     struct event *usb_discon_event;
     struct device *usb_dev;
@@ -252,6 +255,17 @@ struct nose_ctx {
     bool latency_tester_once;
     int latency_tester_pkt_size;
     struct timer *latency_tester_timer;
+    bool speed_test_running;
+    int64_t speed_test_rounds;
+    uint64_t speed_test_start_time;
+    uint64_t speed_test_end_time;
+    bool speed_test_starting;
+    bool speed_test_errors;
+    struct usb_ep ep_lp_in, ep_lp_out;
+    struct event *lp_next_event;
+    uint32_t lp_seq_send, lp_seq_recv;
+    struct timer *lp_update_timer;
+    size_t lp_bytes, lp_pkts;
 #if HAVE_READLINE
     char readline_buf[10];
     size_t readline_buf_size;
@@ -794,9 +808,35 @@ static void grab_stop(struct nose_ctx *ctx)
     }
 }
 
+static void trigger_speed_test_end(struct nose_ctx *ctx)
+{
+    if (ctx->speed_test_errors) {
+        LOG(ctx, "Speed test ended with errors.\n");
+        ctx->exit_status = 2;
+    } else {
+        LOG(ctx, "Speed test OK.\n");
+    }
+    event_loop_request_terminate(ctx->ev);
+}
+
+static void lp_stop(struct nose_ctx *ctx)
+{
+    if (!ctx->speed_test_running)
+        return;
+
+    ctx->speed_test_running = false;
+    usb_ep_remove(&ctx->ep_lp_in);
+    usb_ep_remove(&ctx->ep_lp_out);
+    timer_destroy(ctx->lp_update_timer);
+    ctx->lp_update_timer = NULL;
+    if (ctx->speed_test_rounds == 0)
+        trigger_speed_test_end(ctx);
+}
+
 static void usbdev_close(struct nose_ctx *ctx)
 {
     if (ctx->usb_dev) {
+        lp_stop(ctx);
         grab_stop(ctx);
         device_close(ctx->usb_dev);
         ctx->usb_dev = NULL;
@@ -1952,6 +1992,232 @@ static void cmd_latency_tester_receiver(struct command_ctx *cctx,
     LOG(cctx, "Receiver setup. Listening to incoming packets.\n");
 };
 
+static uint32_t prng(uint32_t *state)
+{
+    *state = *state * 1664525 + 1013904223;
+    return *state;
+}
+
+static void lp_on_receive(struct usb_ep *ep, void *data, size_t size)
+{
+    struct nose_ctx *ctx = ep->user_data;
+
+    if (ctx->speed_test_starting) {
+        LOG(ctx, "Discarding stale packet.\n");
+        return;
+    }
+
+    if (size != LOOP_BUF_SZ - 1) {
+        LOG(ctx, "Error: unexpected test packet size (%zu).\n", size);
+        ctx->speed_test_errors = true;
+    } else {
+        assert(!((uintptr_t)data & 3)); // this can be assumed to be aligned
+        uint32_t *wdata = data;
+        uint32_t seq = wdata[0];
+        if (seq != ctx->lp_seq_recv) {
+            LOG(ctx, "Error: unexpected test packet sequence number.\n");
+            ctx->speed_test_errors = true;
+        }
+        ctx->lp_seq_recv = seq + 1;
+        uint32_t st = seq;
+        for (size_t p = 1; p < size / 4; p++) {
+            if (wdata[p] != prng(&st)) {
+                LOG(ctx, "Error: wrong test packet data\n");
+                ctx->speed_test_errors = true;
+                break;
+            }
+        }
+        // The packet is annoyingly cut off in the middle of the last word.
+        uint32_t last = prng(&st);
+        size_t trail = size - size / 4 * 4;
+        if (memcmp(&last, (char *)data + size - trail, trail)) {
+            LOG(ctx, "Error: wrong test packet data (trail)\n");
+            ctx->speed_test_errors = true;
+        }
+    }
+
+    ctx->lp_bytes += size;
+    ctx->lp_pkts += 1;
+}
+
+static void lp_on_sent(struct usb_ep *ep, bool success)
+{
+    struct nose_ctx *ctx = ep->user_data;
+
+    event_signal(ctx->lp_next_event);
+}
+
+static void on_lp_next(void *ud, struct event *ev)
+{
+    struct nose_ctx *ctx = ud;
+    event_reset(ev);
+
+    if (!ctx->speed_test_running)
+        return;
+
+    if (ctx->speed_test_starting)
+        return;
+
+    if (ctx->speed_test_rounds == 0)
+        return;
+
+    size_t sent_total = 0;
+
+    while (usb_ep_out_get_in_flight(&ctx->ep_lp_out) < 8) {
+        if (sent_total > 32) {
+            // Don't block forever, briefly return to event loop.
+            event_signal(ctx->lp_next_event);
+            break;
+        }
+
+        uint32_t data[LOOP_BUF_SZ / 4];
+        data[0] = ctx->lp_seq_send;
+        uint32_t st = ctx->lp_seq_send;
+        for (size_t p = 1; p < sizeof(data) / 4; p++)
+            data[p] = prng(&st);
+
+        // Reminder how USB bulk transfers work:
+        // - a transfer consists of multiple low level USB packets
+        // - a transfer ends when either:
+        //   - a short USB packet (smaller than max. packet size) was received
+        //     (ZLP required if transfer ends on a full packet)
+        //   - the maximum transfer size was reached (this transfer size is
+        //     defined by higher level protocols)
+        // The problem:
+        // - the latter is merely something you can decide to do on the higher
+        //   level
+        // - in practice it seems easy to desync, because the device will just
+        //   hold a packet if a previous process didn't read it, with no way to
+        //   clear/reset the endpoint from libusb
+        // - this makes behavior seemingly buggy and confusing sometimes, bad
+        //   for something that is supposed to help with testing and debugging
+        // Solution:
+        // - we make the very last USB packet in the transfer shorter by 1 byte
+        //   (last buffer byte simply gets discarded)
+        if (!usb_ep_out_submit(&ctx->ep_lp_out, data, sizeof(data) - 1, 1000)) {
+            LOG(ctx, "Error: could not send test packet\n");
+            ctx->speed_test_errors = true;
+        }
+
+        if (ctx->speed_test_rounds > 0) {
+            ctx->speed_test_rounds -= 1;
+            if (ctx->speed_test_rounds == 0)
+                ctx->speed_test_end_time = get_monotonic_time_us();
+        }
+
+        ctx->lp_seq_send += 1;
+        sent_total += 1;
+    }
+}
+
+static void on_lp_update(void *ud, struct timer *t)
+{
+    struct nose_ctx *ctx = ud;
+
+    LOG(ctx, "usb speed test: %0.2f MB/s %zu pkts/s\n",
+        ctx->lp_bytes / (1024.0 * 1024), ctx->lp_pkts);
+    ctx->lp_bytes = ctx->lp_pkts = 0;
+
+    if (ctx->speed_test_rounds == 0) {
+        // When we receive the data is a question of how long it takes to send
+        // all the queued data and the device to send it back.
+        uint64_t timeout_us = 500 * 1000;
+        if (get_monotonic_time_us() - ctx->speed_test_end_time >= timeout_us) {
+            LOG(ctx, "Ending test.\n");
+            if (ctx->lp_seq_send != ctx->lp_seq_recv) {
+                LOG(ctx, "Not all packets received?\n");
+                ctx->speed_test_errors = true;
+            }
+            lp_stop(ctx);
+        }
+    }
+
+    if (ctx->speed_test_starting) {
+        // Since there's apparently no good way to explicitly flush all endpoint
+        // buffers, just wait for them and discard them.
+        uint64_t flush_time_ms = 500 * 1000;
+        if (get_monotonic_time_us() - ctx->speed_test_start_time >= flush_time_ms) {
+            ctx->speed_test_starting = false;
+            LOG(ctx, "End of start/flush phase.\n");
+            event_signal(ctx->lp_next_event);
+        }
+    }
+}
+
+static void cmd_usb_speed_test(struct command_ctx *cctx,
+                               struct command_param *params,
+                               size_t num_params)
+{
+    struct nose_ctx *ctx = cctx->priv;
+    bool stop = params[0].p_bool;
+    int64_t rounds = params[1].p_int;
+
+    struct device *dev = require_dev(cctx);
+    if (!dev)
+        goto fail;
+
+    if (dev->fw_version < 0x112) {
+        LOG(ctx, "Needs at least firmware version 1.12.\n");
+        goto fail;
+    }
+
+    bool do_run = !stop;
+
+    if (ctx->speed_test_running == do_run)
+        return;
+
+    if (do_run) {
+        ctx->ep_lp_in = (struct usb_ep){
+            .dev = dev->dev,
+            .ep = 0x87,
+            .on_receive = lp_on_receive,
+            .user_data = ctx,
+        };
+        if (!usb_ep_in_add(ctx->global->usb_thr, &ctx->ep_lp_in, 16, LOOP_BUF_SZ))
+            goto fail;
+
+        ctx->ep_lp_out = (struct usb_ep){
+            .dev = dev->dev,
+            .ep = 0x06,
+            .on_sent = lp_on_sent,
+            .user_data = ctx,
+        };
+        if (!usb_ep_out_add(ctx->global->usb_thr, &ctx->ep_lp_out, 16, LOOP_BUF_SZ)) {
+            usb_ep_remove(&ctx->ep_lp_in);
+            goto fail;
+        }
+
+        if (!ctx->lp_next_event) {
+            ctx->lp_next_event = event_loop_create_event(ctx->ev);
+            event_set_on_signal(ctx->lp_next_event, ctx, on_lp_next);
+        }
+
+        ctx->lp_update_timer = event_loop_create_timer(ctx->ev);
+        timer_set_on_timer(ctx->lp_update_timer, ctx, on_lp_update);
+        timer_start(ctx->lp_update_timer, 1000);
+
+        event_signal(ctx->lp_next_event);
+
+        ctx->speed_test_running = true;
+        ctx->speed_test_rounds = rounds;
+        ctx->speed_test_errors = false;
+        ctx->speed_test_starting = true;
+        ctx->speed_test_start_time = get_monotonic_time_us();
+        ctx->lp_bytes = ctx->lp_pkts = 0;
+        LOG(ctx, "Test started.\n");
+    } else {
+        lp_stop(ctx);
+    }
+
+    return;
+
+fail:
+    if (rounds >= 0) {
+        ctx->speed_test_errors = true;
+        trigger_speed_test_end(ctx);
+    }
+}
+
 static void write_to_pipe(void *ctx, const char *fmt, va_list va)
 {
     struct pipe *p = ctx;
@@ -2286,6 +2552,10 @@ const struct command_def command_list[] = {
         {"stop", COMMAND_PARAM_TYPE_BOOL, "false", "disable testing"},
         {"wait-start", COMMAND_PARAM_TYPE_BOOL, "true", "wait for first sample"},
         {"out-file", COMMAND_PARAM_TYPE_STR, "", "write results to this file"},
+    }},
+    {"usb_speed_test", "Test USB connection speed only", cmd_usb_speed_test, {
+        {"stop", COMMAND_PARAM_TYPE_BOOL, "false", "disable testing"},
+        {"exit_after", COMMAND_PARAM_TYPE_INT64, "-1", "exit after this many rounds"},
     }},
     {"exit", "Exit program", cmd_exit },
     {"reboot", "Restart device", cmd_reboot},
@@ -3151,6 +3421,7 @@ int main(int argc, char **argv)
     timer_destroy(ctx->grabber_status_timer);
     timer_destroy(ctx->exit_timer);
     pipe_destroy(ctx->signalfd);
+    event_destroy(ctx->lp_next_event);
     event_destroy(ctx->log_event);
     pipe_destroy(ctx->extcap_fake_fifo);
     event_loop_destroy(ev);
@@ -3158,7 +3429,7 @@ int main(int argc, char **argv)
     flush_log(ctx);
     byte_fifo_dealloc(&ctx->log_fifo);
     pthread_mutex_destroy(&ctx->log_fifo_writer_lock);
-    return 0;
+    return ctx->exit_status;
 
 error_exit:
     if (ctx->extcap_active) {

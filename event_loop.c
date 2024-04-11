@@ -24,6 +24,8 @@ struct timer {
 struct event {
     struct event_loop_item *item;
 
+    bool trigger;
+
     // Protected by event loop lock.
     bool signaled;
     struct notifier *notifier;
@@ -50,6 +52,7 @@ struct pipe {
 
 struct event_loop_item {
     void (*prepare_wait)(struct event_loop_item *item);
+    void (*after_wait)(struct event_loop_item *item);
     void (*work)(struct event_loop_item *item);
 
     struct event_loop *owner;
@@ -235,6 +238,9 @@ void event_loop_run(struct event_loop *ev)
         for (size_t n = 0; n < ev->num_items; n++) {
             struct event_loop_item *item = ev->items[n];
 
+            if (item->after_wait)
+                item->after_wait(item);
+
             if (item->timeout && item->timeout <= now) {
                 item->timeout = 0;
                 item->has_work = true;
@@ -411,19 +417,26 @@ void timer_destroy(struct timer *t)
         event_loop_remove_item(t->item);
 }
 
+static void event_after_wait(struct event_loop_item *item)
+{
+    struct event *ev = item->priv;
+
+    pthread_mutex_lock(&ev->item->owner->lock);
+    ev->trigger |= ev->signaled;
+    ev->signaled = false;
+    pthread_mutex_unlock(&ev->item->owner->lock);
+
+    item->has_work |= ev->trigger;
+}
+
 static void event_work(struct event_loop_item *item)
 {
     struct event *ev = item->priv;
-    bool signaled;
 
-    pthread_mutex_lock(&ev->item->owner->lock);
-    signaled = ev->signaled;
-    pthread_mutex_unlock(&ev->item->owner->lock);
-
-    // item->has_work ensures this is not called on every iteration if the
-    // user does not reset the event.
-    if (signaled && ev->on_signal)
+    if (ev->on_signal && ev->trigger)
         ev->on_signal(ev->on_signal_ud, ev);
+
+    ev->trigger = false;
 }
 
 struct event *event_loop_create_event(struct event_loop *ev)
@@ -432,6 +445,7 @@ struct event *event_loop_create_event(struct event_loop *ev)
     if (!item)
         return NULL;
     item->priv = &item->alloc_.st_event;
+    item->after_wait = event_after_wait;
     item->work = event_work;
     struct event *evt = item->priv;
     *evt = (struct event){
@@ -458,10 +472,8 @@ static void event_set(struct event *ev, bool signaled)
     }
     pthread_mutex_unlock(&ev->item->owner->lock);
 
-    if (need_wakeup) {
-        ev->item->has_work = true;
+    if (need_wakeup)
         wakeup_event_loop(ev->item->owner);
-    }
 }
 
 void event_signal(struct event *ev)

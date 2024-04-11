@@ -112,10 +112,7 @@ struct event;
 struct event *event_loop_create_event(struct event_loop *ev);
 
 // Set the function which will be called by the event loop if the event changes
-// from not signaled to signaled. This does not reset the event. If the event
-// is not reset, on_signal() will not be called again. You can reset it in the
-// callback (rationale: it may depend on the user code when it's ok to get a
-// notification again; otherwise it may lose wakeups).
+// from not signaled to signaled. This resets the event before this is called.
 void event_set_on_signal(struct event *ev, void *ud,
                          void (*on_signal)(void *ud, struct event *ev));
 

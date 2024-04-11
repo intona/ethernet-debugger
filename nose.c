@@ -628,8 +628,6 @@ static void on_log_data(void *ud, struct event *ev)
 {
     struct nose_ctx *ctx = ud;
 
-    event_reset(ev);
-
     flush_log(ctx);
 }
 
@@ -704,8 +702,6 @@ static void on_check_links(void *ud, struct timer *t)
 static void on_phy_change(void *ud, struct event *ev)
 {
     struct nose_ctx *ctx = ud;
-
-    event_reset(ev);
 
     struct device *dev = ctx->usb_dev;
     if (!dev)
@@ -811,8 +807,6 @@ static void usbdev_close(struct nose_ctx *ctx)
 static void on_usb_discon(void *ud, struct event *ev)
 {
     struct nose_ctx *ctx = ud;
-
-    event_reset(ev);
 
     struct device *dev = ctx->usb_dev;
     if (!dev)

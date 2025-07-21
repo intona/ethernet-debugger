@@ -47,9 +47,9 @@ int snprintf_append(char *buf, size_t size, int offset, const char *format, ...)
 
 uint64_t get_time_us(void)
 {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return tv.tv_sec * 1000000ULL + (uint64_t)tv.tv_usec;
+    struct timespec tp = {0};
+    clock_gettime(CLOCK_REALTIME, &tp);
+    return tp.tv_sec * 1000000ULL + tp.tv_nsec / 1000UL;
 }
 
 uint64_t get_monotonic_time_us(void)

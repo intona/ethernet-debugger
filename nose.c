@@ -1554,6 +1554,20 @@ static void show_hw_info(struct command_ctx *cctx)
     }
     free(res);
 
+    if (dev->fw_version >= 0x111) {
+        uint32_t cmd = 10 << 24;
+        uint32_t *recv;
+        size_t recv_sz;
+        int r = device_config_raw(dev, &cmd, 1, &recv, &recv_sz);
+        if (r >= 0 && recv_sz >= 2) {
+            uint64_t ts = (((uint64_t)recv[0]) << 32) | recv[1];
+            LOG(cctx, "HW-Timestamp: 0x%"PRIx64"\n", ts);
+        } else {
+            LOG(cctx, "HW-Timestamp: error %d\n", r);
+        }
+        free(recv);
+    }
+
     LOG(cctx, "Persistent settings stored on the device:\n");
     if (dev->fw_version < 0x106) {
         LOG(cctx, " (none)\n");
@@ -1673,6 +1687,45 @@ static void cmd_hw_info(struct command_ctx *cctx, struct command_param *params,
     }
 
     show_hw_info(cctx);
+}
+
+static void cmd_hw_time_sync(struct command_ctx *cctx,
+                             struct command_param *params, size_t num_params)
+{
+    struct device *dev = require_dev(cctx);
+    if (!dev)
+        return;
+
+    struct device_clock_info info1, info2;
+
+    device_get_clock_info(dev, &info1);
+
+    device_time_sync(dev);
+
+    device_get_clock_info(dev, &info2);
+
+    if (!(info1.valid && info2.valid)) {
+        // This assumes opening the device called device_time_sync(), so info1
+        // is valid.
+        LOG(cctx, "error: time sync failed or unavailable (update firmware?)\n");
+        cctx->success = false;
+        return;
+    }
+
+    int64_t host_diff = info2.host_time - info1.host_time;
+    int64_t dev_diff = info2.device_time - info1.device_time;
+    int64_t deviation = host_diff - dev_diff;
+    double ns_per_sec = 1000.0 * 1000.0 * 1000.0;
+    LOG(cctx, "Query delay: %"PRIu64" us (previous: %"PRIu64" us)\n",
+        info2.delay / 1000, info1.delay / 1000);
+    LOG(cctx, "Time passed since previous sync:\n");
+    LOG(cctx, "...real time: %.3f s\n", host_diff / ns_per_sec);
+    LOG(cctx, "...device time: %.3f s\n", dev_diff / ns_per_sec);
+    LOG(cctx, "Deviation (real - device): %"PRId64" ns\n", deviation);
+    if (imaxabs(host_diff) > ns_per_sec / 10) {
+        LOG(cctx, "Computed deviation every 1 hour (based on the above): %"PRId64" ms\n",
+            60 * 60 * deviation * 1000 / host_diff);
+    }
 }
 
 static void cmd_dev_reset_settings(struct command_ctx *cctx,
@@ -2210,6 +2263,7 @@ const struct command_def command_list[] = {
             "Update period in MS (0 disables)",
             .irange = {0, 100000}},
     }},
+    {"hw_time_sync", "Sync with hardware clock", cmd_hw_time_sync},
     {"reset_device_settings", "Reset settings stored on the device to defaults.",
         cmd_dev_reset_settings },
     {"cfg_packet", "Write raw config command packet", cmd_cfg_packet, {

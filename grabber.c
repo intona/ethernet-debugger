@@ -354,7 +354,7 @@ static struct grabber_packet *packet_fifo_read_next(struct grabber *gr,
     read_fifo->dropped_total =
         read_fifo->stats.hw_dropped + read_fifo->stats.sw_dropped;
 
-    uint64_t system_start_time = gr->system_start_time;
+    uint64_t time_offset = gr->system_start_time;
 
     pthread_mutex_unlock(&gr->fifo_mutex);
 
@@ -368,11 +368,17 @@ static struct grabber_packet *packet_fifo_read_next(struct grabber *gr,
         byte_fifo_read(&read_fifo->data, read_fifo->packet_buffer, aligned_size);
     assert(r == aligned_size); // ring buffer logic guarantees this
 
+    struct device_clock_info clock_info;
+    device_get_clock_info(gr->device, &clock_info);
+    if (clock_info.valid) {
+        time_offset = clock_info.host_time - clock_info.device_time;
+    }
+
     read_fifo->packet = (struct grabber_packet){
         .iface = &read_fifo->gr_iface,
         .data = read_fifo->packet_buffer,
         .size = info.payload_bytecount,
-        .time_ns = SC_INFO_TIMESTAMP(info) + system_start_time,
+        .time_ns = SC_INFO_TIMESTAMP(info) + time_offset,
         .dropped_inc = read_fifo->dropped_total - read_fifo->dropped_total_prev,
         .interpacket_frame_gap = info.interpacket_frame_gap,
         .fcs_error = info.errors & (1 << 15),
@@ -619,6 +625,9 @@ static void transmit_packet(struct grabber *gr, struct packet_fifo *fifo,
     // when we receive the first packet and know its device timestamp. Since the
     // system clock will deviate anyway, determining the exact time (including
     // latency from USB) is probably not worth the trouble.
+    // This is a relatively bad choice, because the first captured packet can be
+    // "from a while ago". Newer firmware revisions provide an improved
+    // mechanism, which overrides this.
     if (!gr->system_start_time)
         gr->system_start_time = get_time_us() * 1000 - ts;
 
@@ -970,6 +979,9 @@ int grabber_start(struct global *global, struct grabber_options *opts)
     if (linktype != LINKTYPE_ETHERNET_MPACKET &&
         linktype != LINKTYPE_ETHERNET)
         goto done; // not supported
+
+    // Before USB communication is started.
+    device_time_sync(gr->device);
 
     for (size_t n = 0; n < 2; n++) {
         struct usb_ep *ep = &gr->eps[n];

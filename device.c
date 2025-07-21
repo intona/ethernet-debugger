@@ -200,6 +200,80 @@ done:
     return r;
 }
 
+int device_time_sync(struct device *dev)
+{
+    if (dev->fw_version < 0x111)
+        return -1;
+
+    // Repeat the test a number of times to fight jitter.
+    int num_runs = 10;
+    int64_t min_delay = INT64_MAX;
+    uint64_t res_host_time = 0;
+    uint64_t res_device_time = 0;
+    bool ok = true;
+
+    // Prevent that other slow cfg commands are executed (such as MDIO updates).
+    device_cfg_lock(dev);
+
+    for (int run = 0; run < num_runs; run++) {
+        uint64_t host_start = get_time_us() * 1000;
+        uint32_t cmd = 10 << 24;
+        uint32_t *recv;
+        size_t recv_sz;
+        int r = device_config_raw(dev, &cmd, 1, &recv, &recv_sz);
+        if (r < 0 || recv_sz < 2) {
+            LOG(dev->global, "Time sync HW failure.\n");
+            ok = false;
+            break;
+        }
+        uint64_t host_end = get_time_us() * 1000;
+        uint64_t delay = host_end - host_start;
+        uint64_t device_time = (((uint64_t)recv[0]) << 32) | recv[1];
+        // Assume that both directions take around the same time (like NTP
+        // does). Try to determine the host time when the device sampled its
+        // own time.
+        // This may or may not be a good idea.
+        uint64_t delay_2 = delay / 2;
+        uint64_t host_time = host_start + delay_2;
+        int64_t diff = host_time - device_time;
+
+        HINT(dev->global,
+             "HW time: 0x%"PRIx64" ns, delay=%"PRId64" ns, diff=%"PRId64" ns\n",
+             device_time, delay_2, diff);
+
+        if (delay_2 <= min_delay) {
+            min_delay = delay_2;
+            res_host_time = host_time;
+            res_device_time = device_time;
+        }
+    }
+
+    pthread_mutex_lock(&dev->lock);
+    if (ok) {
+        HINT(dev->global, "Minimum delay: %"PRIu64" ns\n", min_delay);
+        dev->clock_info = (struct device_clock_info){
+            .valid = true,
+            .host_time = res_host_time,
+            .device_time = res_device_time,
+            .delay = min_delay,
+        };
+    } else {
+        dev->clock_info.valid = false;
+    }
+    pthread_mutex_unlock(&dev->lock);
+
+    device_cfg_unlock(dev);
+
+    return ok ? 0 : -1;
+}
+
+void device_get_clock_info(struct device *dev, struct device_clock_info *info)
+{
+    pthread_mutex_lock(&dev->lock);
+    *info = dev->clock_info;
+    pthread_mutex_unlock(&dev->lock);
+}
+
 // Responding to IRQs is done on a separate thread to avoid blocking, and to
 // avoid terrible libusb callback reentrancy issues.
 static void *irq_thread(void *p)
@@ -447,6 +521,8 @@ struct device *device_open_with_handle(struct global *global,
     };
     if (!usb_ep_in_add(global->usb_thr, &dev->debug_in, 6, 16 * 1024))
         goto fail;
+
+    device_time_sync(dev);
 
     if (dev->fw_version < 0x106) {
         bool mdio_init_ok = true;

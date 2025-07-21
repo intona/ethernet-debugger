@@ -214,6 +214,23 @@ struct phy_status {
 // All of *st is written to (all-0 if port isn't DEV_PORT_A or DEV_PORT_B).
 void device_get_phy_status(struct device *dev, int port, struct phy_status *st);
 
+struct device_clock_info {
+    bool valid;             // time information valid (all-0 otherwise)
+    uint64_t host_time;     // CLOCK_REALTIME in nanoseconds since last resync
+    uint64_t device_time;   // Hardware timer in nanoseconds since last resync
+    uint64_t delay;         // est. query delay (already included in host_time)
+};
+
+// Actively read the hardware time from the device and determine the offset to
+// the host clock.
+// The result can be retrieved with device_get_clock_info().
+//  returns: ==0: success, <0: error code
+int device_time_sync(struct device *dev);
+
+// Set *info to what was previously computed by device_time_sync().
+// No device access is performed.
+void device_get_clock_info(struct device *dev, struct device_clock_info *info);
+
 struct device {
     struct global *global;
     struct libusb_device_handle *dev;
@@ -241,6 +258,7 @@ struct device {
     int cfg_locked;                 // a thread has exclusive access
     pthread_t cfg_locked_by;
     struct phy_status phys[2];
+    struct device_clock_info clock_info;
     pthread_t irq_thread;
     bool irq_thread_valid;
     bool irq_pending;               // IRQ packets were received

@@ -123,7 +123,7 @@ void report_oom(size_t size, const char *file, int line)
 
 void *xalloc_impl(size_t size, const char *file, int line)
 {
-    void *r = calloc(size, 1);
+    void *r = calloc(1, size);
     if (!r)
         report_oom(size, file, line);
     return r;

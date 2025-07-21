@@ -134,7 +134,7 @@ void *xalloc_impl(size_t size, const char *file, int line);
 
 // Allocate for the given pointer. Helpful idiom for:
 //  some_type *var = ALLOC_PTRTYPE(var);
-#define ALLOC_PTRTYPE(ptr) ((TYPEOF(ptr))calloc(sizeof(*(ptr)), 1))
+#define ALLOC_PTRTYPE(ptr) ((TYPEOF(ptr))calloc(1, sizeof(*(ptr))))
 
 // Like ALLOC_PTRTYPE(), but crash the process on OOM.
 #define XALLOC_PTRTYPE(ptr) ((TYPEOF(ptr))xalloc(sizeof(*(ptr))))

@@ -483,7 +483,7 @@ struct device *device_open_with_handle(struct global *global,
     usb_get_device_name(libusb_get_device(udev), name, sizeof(name));
     char serial[USB_DEVICE_SERIAL_LEN];
     usb_get_device_serial(libusb_get_device(udev), serial, sizeof(serial));
-    LOG(global, "Device %s / %s (firmware %d.%02d) opened.\n", serial, name,
+    LOG(global, "Device %s / %s (firmware %d.%02x) opened.\n", serial, name,
         dev->fw_version >> 8, dev->fw_version & 0xFF);
 
     uint8_t major_dev_ver = desc.bcdDevice >> 8;

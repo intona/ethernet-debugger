@@ -1516,7 +1516,7 @@ static void show_hw_info(struct command_ctx *cctx)
 
     struct libusb_device_descriptor desc;
     if (!libusb_get_device_descriptor(libusb_get_device(dev->dev), &desc)) {
-        LOG(cctx, "Firmware version: %d.%02d\n", desc.bcdDevice >> 8,
+        LOG(cctx, "Firmware version: %d.%02x\n", desc.bcdDevice >> 8,
             desc.bcdDevice & 0xFF);
 
         char name[USB_DEVICE_NAME_LEN];
@@ -2379,7 +2379,7 @@ static int handle_firmware_update(struct nose_ctx *ctx)
         return 2;
     }
 
-    LOG(ctx, "Firmware file: version %d.%02d\n", fw_version >> 8, fw_version & 0xFF);
+    LOG(ctx, "Firmware file: version %d.%02x\n", fw_version >> 8, fw_version & 0xFF);
 
     libusb_device **list = NULL;
     libusb_get_device_list(usb_thread_libusb_context(ctx->global->usb_thr), &list);
@@ -2409,7 +2409,7 @@ static int handle_firmware_update(struct nose_ctx *ctx)
                 char *comment = "";
                 if (desc.bcdDevice < fw_version)
                     comment = " (outdated)";
-                snprintf(ver, sizeof(ver), "%d.%02d%s", desc.bcdDevice >> 8,
+                snprintf(ver, sizeof(ver), "%d.%02x%s", desc.bcdDevice >> 8,
                          desc.bcdDevice & 0xFF, comment);
             }
 

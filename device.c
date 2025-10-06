@@ -246,6 +246,8 @@ int device_time_sync(struct device *dev)
             res_host_time = host_time;
             res_device_time = device_time;
         }
+
+        free(recv);
     }
 
     pthread_mutex_lock(&dev->lock);

@@ -3264,6 +3264,8 @@ int main(int argc, char **argv)
     };
     pthread_mutex_init(&ctx->log_fifo_writer_lock, NULL);
 
+    int exit_code = 1;
+
     ctx->log_event = event_loop_create_event(ev);
     event_set_on_signal(ctx->log_event, ctx, on_log_data);
 
@@ -3289,17 +3291,17 @@ int main(int argc, char **argv)
     options_init_allocs(option_list, &ctx->opts);
 
     if (!options_parse(ctx->log, option_list, &ctx->opts, argv))
-        goto error_exit;
+        goto done;
 
     ctx->global->usb_thr = usb_thread_create(ctx->global);
     if (!ctx->global->usb_thr)
-        goto error_exit;
+        goto done;
 
     if (ctx->opts.init_cmds[0]) {
         int err = run_commands(ctx, ctx->opts.init_cmds);
         if (err) {
-            flush_log(ctx);
-            exit(err);
+            exit_code = err;
+            goto done;
         }
     }
 
@@ -3324,7 +3326,7 @@ int main(int argc, char **argv)
 
     if (ctx->opts.init_serial[0]) {
         LOG(ctx, "Using --selftest-serial requires --selftest.\n");
-        goto error_exit;
+        goto done;
     }
 
     if (ctx->opts.fw_update_file[0]) {
@@ -3334,7 +3336,7 @@ int main(int argc, char **argv)
     }
 
     if (!handle_extcap(ctx))
-        goto error_exit;
+        goto done;
 
     if (!ctx->usb_dev && strcmp(ctx->opts.device, "none") != 0) {
         struct device *dev = device_open(ctx->global, ctx->opts.device);
@@ -3347,7 +3349,7 @@ int main(int argc, char **argv)
             if (ctx->opts.device[0]) {
                 LOG(ctx, "Exiting because device could not be opened.\n");
                 if (!ctx->extcap_active)
-                    goto error_exit;
+                    goto done;
             }
         }
 
@@ -3389,15 +3391,15 @@ int main(int argc, char **argv)
 
     if (ctx->opts.run_wireshark) {
         if (!ctx->usb_dev)
-            goto error_exit;
+            goto done;
         if (!start_wireshark_etc(ctx))
-            goto error_exit;
+            goto done;
         exit_on_capture_stop = true;
     }
 
     if (ctx->opts.capture_to[0]) {
         if (!grab_start(ctx, ctx->log, ctx->opts.capture_to))
-            goto error_exit;
+            goto done;
         exit_on_capture_stop = true;
     }
 
@@ -3416,7 +3418,7 @@ int main(int argc, char **argv)
         ctx->ipc_server = event_loop_open_pipe(ctx->ev, ipc_path, PIPE_FLAG_SERVE);
         if (!ctx->ipc_server) {
             LOG(ctx, "error: creating IPC server failed.\n");
-            goto error_exit;
+            goto done;
         }
         pipe_set_on_event(ctx->ipc_server, ctx, on_ipc_server_event);
 
@@ -3430,7 +3432,7 @@ int main(int argc, char **argv)
         struct client *cl = add_client(ctx, p, false);
         if (!cl) {
             LOG(ctx, "error: creating IPC connection failed.\n");
-            goto error_exit;
+            goto done;
         }
         cl->is_control = true;
     }
@@ -3447,8 +3449,8 @@ int main(int argc, char **argv)
     if (ctx->opts.post_init_cmds[0]) {
         int err = run_commands(ctx, ctx->opts.post_init_cmds);
         if (err) {
-            flush_log(ctx);
-            exit(err);
+            exit_code = err;
+            goto done;
         }
     }
 
@@ -3459,6 +3461,16 @@ int main(int argc, char **argv)
     }
 
     event_loop_run(ev);
+
+    exit_code = ctx->exit_status;
+done:
+    on_terminate(ctx, ev);
+
+    if (exit_code && ctx->extcap_active) {
+        LOG(ctx, "Capture failed.\n");
+        ctx->mute_terminal = false; // let flush_log() write to stderr
+    }
+
     options_free(option_list, &ctx->opts);
     if (ctx->fifo_path)
         unlink(ctx->fifo_path);
@@ -3481,13 +3493,5 @@ int main(int argc, char **argv)
     flush_log(ctx);
     byte_fifo_dealloc(&ctx->log_fifo);
     pthread_mutex_destroy(&ctx->log_fifo_writer_lock);
-    return ctx->exit_status;
-
-error_exit:
-    if (ctx->extcap_active) {
-        LOG(ctx, "Capture failed.\n");
-        ctx->mute_terminal = false; // let flush_log() write to stderr
-    }
-    flush_log(ctx);
-    return 1;
+    return exit_code;
 }

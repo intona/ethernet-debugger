@@ -45,12 +45,10 @@ enough.
 
 After installing the dependencies, run the following::
 
-    git clone https://github.com/intona/ethernet-debugger.git
+    git clone --recursive https://github.com/intona/ethernet-debugger.git
     cd ethernet-debugger
-    git submodule init
-    git submodule update
-    meson build     # create build files in directory named "build"
-    ninja -C build  # pass it the build directory chosen above
+    meson setup build       # create build files in directory named "build"
+    meson compile -C build  # pass it the build directory chosen above
 
 If you're trying to cross-compile to Windows, the situation is more complex.
 See for example:
@@ -93,11 +91,16 @@ installation, or user config directory.
 
 You can for example do (after "nose" is installed)::
 
-    mkdir -p ~/.config/wireshark/extcap/
-    ln -s `which nose` ~/.config/wireshark/extcap/nose
+    mkdir -p ~/.local/lib/wireshark/extcap/
+    ln -s `which nose` ~/.local/lib/wireshark/extcap/nose
+
+Wireshark seems to change these paths every other release. If in doubt, check
+the paths and the list of loaded plugins in the Wireshark Help / About Wireshark
+dialog. "nose" should be listed as an extcap plugin.
 
 See the Wireshark documentation for details about extcap:
 https://www.wireshark.org/docs/wsdg_html_chunked/ChCaptureExtcap.html
+https://www.wireshark.org/docs/man-pages/extcap.html
 
 See the `Ethernet Debugger User Guide <https://intona.eu/doc/ethernet-debugger>`_
 for details and information about other OSes.

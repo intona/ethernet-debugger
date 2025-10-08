@@ -1083,6 +1083,8 @@ static bool start_grabber(struct nose_ctx *ctx, struct grabber_options *opts)
     }
 
     LOG(ctx, "Starting capture thread %s.\n", success ? "succeeded" : "failed");
+    if (success && opts->filename && opts->filename[0])
+        LOG(ctx, "Capturing to: %s\n", opts->filename);
     return success;
 }
 
